@@ -1,0 +1,273 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------ *
+ * Palette
+ *
+ * Muted, warm, and low-chroma on purpose. Saturated dashboards read as
+ * consumer software; wealth reads as restraint. Accents are brass and
+ * desaturated jewel tones, never neon.
+ * ------------------------------------------------------------------ */
+@theme {
+  --color-ink: #08090b;
+  --color-panel: #0e1013;
+  --color-panel-2: #14171b;
+  --color-panel-3: #1a1e23;
+  --color-line: #23272e;
+  --color-line-soft: #191d22;
+
+  --color-parchment: #e9e5db;
+  --color-dim: #9c988e;
+  --color-faint: #6b6860;
+  --color-ghost: #47443f;
+
+  --color-brass: #c9a227;
+  --color-brass-deep: #8a7228;
+  --color-brass-wash: #2a2313;
+
+  --color-positive: #74a37f;
+  --color-negative: #b8564c;
+  --color-caution: #c28c3e;
+  --color-violet: #8f74a2;
+  --color-teal: #7a9e9f;
+
+  --font-display: var(--font-serif), ui-serif, Georgia, serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, 'SF Mono', monospace;
+
+  --radius-card: 6px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Base
+ * ------------------------------------------------------------------ */
+html {
+  background: var(--color-ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-parchment);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* A very fine film grain. At 2.5% it is invisible as texture and only
+   registers as "this surface has depth" — the trick print uses. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::selection {
+  background: var(--color-brass);
+  color: #0b0c0e;
+}
+
+/* Numerals must never reflow as they tick. Every figure in the app uses this. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* ------------------------------------------------------------------ *
+ * Typography primitives
+ * ------------------------------------------------------------------ */
+.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+}
+
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+  font-weight: 500;
+}
+
+.rule-gold {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-brass-deep) 18%,
+    var(--color-brass) 50%,
+    var(--color-brass-deep) 82%,
+    transparent
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Surfaces
+ * ------------------------------------------------------------------ */
+.panel {
+  background: linear-gradient(180deg, var(--color-panel) 0%, #0b0d10 100%);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-card);
+}
+
+.panel-raised {
+  background: linear-gradient(180deg, var(--color-panel-2) 0%, var(--color-panel) 100%);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.02) inset,
+    0 18px 40px -24px rgba(0, 0, 0, 0.9);
+}
+
+.hairline {
+  border-color: var(--color-line-soft);
+}
+
+/* ------------------------------------------------------------------ *
+ * Scrollbars — thin, brass on hover, invisible otherwise
+ * ------------------------------------------------------------------ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-brass-deep);
+}
+
+/* ------------------------------------------------------------------ *
+ * Controls
+ * ------------------------------------------------------------------ */
+input,
+select,
+textarea {
+  background: #0a0c0f;
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  color: var(--color-parchment);
+  padding: 7px 10px;
+  font-size: 13px;
+  width: 100%;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  font-variant-numeric: tabular-nums;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-brass-deep);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.09);
+}
+
+input[type='range'] {
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--color-brass);
+  height: 22px;
+}
+
+input[type='checkbox'] {
+  width: auto;
+  accent-color: var(--color-brass);
+}
+
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b6860' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+:focus-visible {
+  outline: 1px solid var(--color-brass-deep);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Recharts overrides — the defaults are far too loud
+ * ------------------------------------------------------------------ */
+.recharts-cartesian-grid line {
+  stroke: var(--color-line-soft);
+}
+.recharts-text {
+  fill: var(--color-faint);
+  font-size: 10px;
+}
+.recharts-curve.recharts-tooltip-cursor {
+  stroke: var(--color-brass-deep);
+  stroke-dasharray: 3 3;
+}
+.recharts-surface:focus {
+  outline: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Motion
+ * ------------------------------------------------------------------ */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes sheen {
+  0% {
+    background-position: -180% 0;
+  }
+  100% {
+    background-position: 180% 0;
+  }
+}
+
+.sheen {
+  background: linear-gradient(
+    90deg,
+    var(--color-panel-2) 0%,
+    var(--color-panel-3) 45%,
+    var(--color-panel-2) 90%
+  );
+  background-size: 200% 100%;
+  animation: sheen 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Keep the mobile tab bar clear of the home indicator. */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
