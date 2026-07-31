@@ -1,161 +1,134 @@
 'use client'
 
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useStore } from '@/lib/store'
-import { money, moneyCompact } from '@/lib/format'
-import { longDate, today } from '@/lib/dates'
-import { KeyHint } from '@/components/ui'
-import {
-  IconAccounts,
-  IconAlert,
-  IconBills,
-  IconCfo,
-  IconClose,
-  IconCredit,
-  IconFlow,
-  IconIncome,
-  IconInvest,
-  IconMenu,
-  IconOverview,
-  IconReports,
-  IconRules,
-  IconSettings,
-  IconShield,
-  IconSubscriptions,
-} from '@/components/icons'
+import { money } from '@/lib/format'
+import type { Transaction } from '@/lib/types'
+import { TransactionSheet } from '@/components/TransactionSheet'
+
+/* ------------------------------------------------------------------ *
+ * Add-transaction is reachable from anywhere, so the sheet lives here
+ * and pages open it through this context rather than each owning a copy.
+ * ------------------------------------------------------------------ */
+
+interface SheetControl {
+  add: () => void
+  edit: (tx: Transaction) => void
+}
+
+const SheetContext = createContext<SheetControl | null>(null)
+
+export function useTransactionSheet(): SheetControl {
+  const ctx = useContext(SheetContext)
+  if (!ctx) throw new Error('useTransactionSheet must be used inside Shell')
+  return ctx
+}
+
+/* ------------------------------------------------------------------ *
+ * Navigation
+ * ------------------------------------------------------------------ */
 
 interface NavItem {
   href: string
   label: string
-  icon: (p: { className?: string }) => ReactNode
-  group: 'Position' | 'Obligations' | 'Growth' | 'System'
-  /** `g` then this key jumps here. */
-  hotkey?: string
+  icon: ReactNode
 }
 
+const Ic = ({ d }: { d: string }) => (
+  <svg
+    width="22"
+    height="22"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d={d} />
+  </svg>
+)
+
 const NAV: NavItem[] = [
-  { href: '/', label: 'Overview', icon: IconOverview, group: 'Position', hotkey: 'o' },
-  { href: '/cash-flow', label: 'Cash Flow', icon: IconFlow, group: 'Position', hotkey: 'f' },
-  { href: '/accounts', label: 'Accounts', icon: IconAccounts, group: 'Position', hotkey: 'a' },
-  { href: '/income', label: 'Income', icon: IconIncome, group: 'Position', hotkey: 'i' },
-
-  { href: '/obligations', label: 'Obligations', icon: IconBills, group: 'Obligations', hotkey: 'b' },
-  { href: '/subscriptions', label: 'Subscriptions', icon: IconSubscriptions, group: 'Obligations', hotkey: 's' },
-  { href: '/credit', label: 'Credit', icon: IconCredit, group: 'Obligations', hotkey: 'c' },
-
-  { href: '/investments', label: 'Investments', icon: IconInvest, group: 'Growth', hotkey: 'v' },
-  { href: '/reserve', label: 'Reserve & Goals', icon: IconShield, group: 'Growth', hotkey: 'r' },
-  { href: '/reports', label: 'Reports', icon: IconReports, group: 'Growth', hotkey: 'p' },
-
-  { href: '/cfo', label: 'Ask the CFO', icon: IconCfo, group: 'System', hotkey: 'k' },
-  { href: '/automation', label: 'Automation', icon: IconRules, group: 'System', hotkey: 'u' },
-  { href: '/settings', label: 'Settings', icon: IconSettings, group: 'System', hotkey: ',' },
+  { href: '/', label: 'Home', icon: <Ic d="M3 11.2 12 4l9 7.2M5.4 10v9.4h13.2V10" /> },
+  { href: '/transactions', label: 'Activity', icon: <Ic d="M4 7h16M4 12h16M4 17h10" /> },
+  { href: '/spending', label: 'Spending', icon: <Ic d="M12 3a9 9 0 1 0 9 9h-9z M14 3.4A9 9 0 0 1 20.6 10H14z" /> },
+  { href: '/accounts', label: 'Accounts', icon: <Ic d="M3 8.5 12 4l9 4.5M5 10v7M9.7 10v7M14.3 10v7M19 10v7M3 20h18" /> },
+  { href: '/recurring', label: 'Bills', icon: <Ic d="M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4" /> },
+  { href: '/forecast', label: 'Forecast', icon: <Ic d="M3 17c3 0 3.5-10 7-10s3 7 5.5 7c1.6 0 2.2-3 3.5-3M3 20h18" /> },
+  { href: '/goals', label: 'Goals', icon: <Ic d="M12 21s7-4.4 7-10a7 7 0 1 0-14 0c0 5.6 7 10 7 10z M12 11.8a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4z" /> },
+  { href: '/advisor', label: 'Advice', icon: <Ic d="M12 3 14 9l6 .8-4.4 4.2 1.2 6L12 17.2 7.2 20l1.2-6L4 9.8 10 9z" /> },
+  { href: '/settings', label: 'Settings', icon: <Ic d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5" /> },
 ]
 
-const GROUPS: NavItem['group'][] = ['Position', 'Obligations', 'Growth', 'System']
+/** The four that earn a permanent slot on a phone. */
+const MOBILE_PRIMARY = ['/', '/transactions', '/spending', '/accounts']
 
-/** `/cash-flow/` and `/cash-flow` are the same page; trailingSlash export adds the slash. */
 function normalise(p: string) {
   return p !== '/' && p.endsWith('/') ? p.slice(0, -1) : p
 }
 
 export function Shell({ children }: { children: ReactNode }) {
   const pathname = normalise(usePathname() ?? '/')
-  const router = useRouter()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [editing, setEditing] = useState<Transaction | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
-    setDrawerOpen(false)
-    setPaletteOpen(false)
+    setMenuOpen(false)
   }, [pathname])
 
-  // ⌘K opens the palette; `g` then a letter jumps directly.
-  useEffect(() => {
-    let awaitingGoto = false
-    let timer: ReturnType<typeof setTimeout> | undefined
+  const add = useCallback(() => {
+    setEditing(null)
+    setSheetOpen(true)
+  }, [])
 
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null
-      const typing =
-        el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
-
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setPaletteOpen((v) => !v)
-        return
-      }
-      if (typing) return
-
-      if (e.key === 'Escape') {
-        setPaletteOpen(false)
-        setDrawerOpen(false)
-        return
-      }
-
-      if (awaitingGoto) {
-        const match = NAV.find((n) => n.hotkey === e.key.toLowerCase())
-        awaitingGoto = false
-        if (match) {
-          e.preventDefault()
-          router.push(match.href)
-        }
-        return
-      }
-
-      if (e.key.toLowerCase() === 'g') {
-        awaitingGoto = true
-        clearTimeout(timer)
-        timer = setTimeout(() => {
-          awaitingGoto = false
-        }, 1400)
-      }
-    }
-
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      clearTimeout(timer)
-    }
-  }, [router])
+  const edit = useCallback((tx: Transaction) => {
+    setEditing(tx)
+    setSheetOpen(true)
+  }, [])
 
   return (
-    <div className="min-h-dvh lg:flex">
-      <Sidebar pathname={pathname} />
+    <SheetContext.Provider value={{ add, edit }}>
+      <div className="min-h-dvh lg:flex">
+        <Sidebar pathname={pathname} onAdd={add} />
 
-      <MobileBar onMenu={() => setDrawerOpen(true)} />
+        <main className="min-w-0 flex-1 pb-[calc(76px+env(safe-area-inset-bottom,0px))] lg:pb-0">
+          <div className="mx-auto w-full max-w-[840px] px-4 pt-5 sm:px-6 sm:pt-8">
+            <Gate>{children}</Gate>
+          </div>
+        </main>
 
-      <AnimatePresence>
-        {drawerOpen && <Drawer pathname={pathname} onClose={() => setDrawerOpen(false)} />}
-      </AnimatePresence>
+        <TabBar pathname={pathname} onAdd={add} onMore={() => setMenuOpen(true)} />
 
-      <AnimatePresence>
-        {paletteOpen && <Palette onClose={() => setPaletteOpen(false)} />}
-      </AnimatePresence>
+        <AnimatePresence>
+          {menuOpen && <MoreMenu pathname={pathname} onClose={() => setMenuOpen(false)} />}
+        </AnimatePresence>
 
-      <main className="min-w-0 flex-1 pb-24 lg:pb-0">
-        <div className="mx-auto w-full max-w-[1180px] px-4 pt-6 sm:px-7 sm:pt-9 lg:pt-11">
-          <Gate>
-            {children}
-            <Footer />
-          </Gate>
-        </div>
-      </main>
-    </div>
+        <TransactionSheet open={sheetOpen} onClose={() => setSheetOpen(false)} editing={editing} />
+      </div>
+    </SheetContext.Provider>
   )
 }
 
 /* ------------------------------------------------------------------ *
  * Hydration gate
  *
- * The page is prerendered at build time, but the real state lives in
- * localStorage and every projection is anchored to *today*. Rendering the
- * dashboard before both are known would hydrate build-day numbers into a
- * client showing a different date. The skeleton is what the static HTML
- * contains; the real interface mounts once state has loaded.
+ * Pages are prerendered at build time, but real state comes from
+ * localStorage and every projection is anchored to *today*. Rendering
+ * before both are known would hydrate build-day numbers into a client
+ * showing a different date.
  * ------------------------------------------------------------------ */
 
 function Gate({ children }: { children: ReactNode }) {
@@ -163,17 +136,11 @@ function Gate({ children }: { children: ReactNode }) {
   if (ready) return <>{children}</>
 
   return (
-    <div className="space-y-6" aria-busy="true" aria-label="Loading your position">
-      <div className="space-y-3">
-        <div className="sheen h-2.5 w-28 rounded" />
-        <div className="sheen h-9 w-72 max-w-full rounded" />
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="sheen h-[104px] rounded-[6px]" />
-        ))}
-      </div>
-      <div className="sheen h-[300px] rounded-[6px]" />
+    <div className="space-y-4" aria-busy="true" aria-label="Loading">
+      <div className="sheen h-8 w-44" />
+      <div className="sheen h-[132px]" />
+      <div className="sheen h-[92px]" />
+      <div className="sheen h-[240px]" />
     </div>
   )
 }
@@ -182,110 +149,116 @@ function Gate({ children }: { children: ReactNode }) {
  * Desktop rail
  * ------------------------------------------------------------------ */
 
-function Sidebar({ pathname }: { pathname: string }) {
-  const { state, forecast, ready } = useStore()
+function Sidebar({ pathname, onAdd }: { pathname: string; onAdd: () => void }) {
+  const { metrics, ready } = useStore()
 
   return (
-    <aside className="sticky top-0 hidden h-dvh w-[244px] shrink-0 flex-col border-r border-line-soft bg-panel/60 lg:flex">
-      <div className="px-5 pb-5 pt-7">
-        <Link href="/" className="block">
-          <div className="display text-[19px] leading-tight tracking-tight">
-            Financial<span className="text-brass">.</span>OS
-          </div>
-          <div className="eyebrow mt-1.5">{state.settings.ownerName}</div>
+    <aside className="sticky top-0 hidden h-dvh w-[236px] shrink-0 flex-col border-r border-line-soft bg-surface/40 lg:flex">
+      <div className="px-5 pb-4 pt-7">
+        <Link href="/" className="display block text-[20px] leading-tight">
+          Financial<span className="text-accent">.</span>OS
         </Link>
+        <div className="mt-3">
+          <div className="label mb-1">In the bank</div>
+          <div className="tnum display text-[22px]">{ready ? money(metrics.netWorth.cash) : '—'}</div>
+        </div>
       </div>
 
-      <div className="rule-gold mx-5 h-px opacity-30" />
+      <div className="px-3">
+        <button
+          onClick={onAdd}
+          className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-[var(--radius-control)] border border-accent/50 bg-accent-wash text-[15px] font-medium text-accent active:bg-accent/20"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Add transaction
+        </button>
+      </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
-        {GROUPS.map((group) => (
-          <div key={group} className="mb-5">
-            <div className="eyebrow px-2 pb-2">{group}</div>
-            <ul className="space-y-px">
-              {NAV.filter((n) => n.group === group).map((item) => (
-                <li key={item.href}>
-                  <NavLink item={item} active={pathname === item.href} />
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        <ul className="space-y-0.5">
+          {NAV.map((item) => (
+            <li key={item.href}>
+              <Link
+                href={item.href}
+                className={`flex min-h-[44px] items-center gap-3 rounded-[var(--radius-control)] px-3 text-[14.5px] transition-colors ${
+                  pathname === item.href ? 'bg-surface-2 text-text' : 'text-faint active:bg-surface-2'
+                }`}
+              >
+                <span className={pathname === item.href ? 'text-accent' : 'text-ghost'}>{item.icon}</span>
+                {item.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
       </nav>
-
-      <div className="border-t border-line-soft px-5 py-4">
-        <div className="eyebrow mb-1.5">Liquid position</div>
-        <div className="tnum display text-[19px]">
-          {ready ? money(forecast.openingTotal) : '—'}
-        </div>
-        <div className="mt-1 text-[10.5px] text-ghost">
-          Trough {ready ? moneyCompact(forecast.trough.total) : '—'} · {forecast.days.length - 1}d
-        </div>
-        <div className="mt-3 flex items-center gap-1.5 text-[10px] text-ghost">
-          <KeyHint>⌘K</KeyHint> command
-        </div>
-      </div>
     </aside>
   )
 }
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
-  const Icon = item.icon
-  return (
-    <Link
-      href={item.href}
-      className={`group relative flex items-center gap-2.5 rounded-[4px] px-2 py-[7px] text-[12.5px] transition-colors ${
-        active ? 'bg-panel-2 text-parchment' : 'text-faint hover:bg-panel-2/60 hover:text-dim'
-      }`}
-    >
-      {active && (
-        <motion.span
-          layoutId="nav-active"
-          className="absolute left-0 top-1/2 h-[15px] w-[2px] -translate-y-1/2 rounded-full bg-brass"
-          transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-        />
-      )}
-      <Icon className={active ? 'text-brass' : 'text-ghost group-hover:text-faint'} />
-      <span className="truncate">{item.label}</span>
-    </Link>
-  )
-}
-
 /* ------------------------------------------------------------------ *
- * Mobile
+ * Mobile tab bar with a centre add button
  * ------------------------------------------------------------------ */
 
-const MOBILE_PRIMARY = ['/', '/cash-flow', '/cfo', '/investments']
-
-function MobileBar({ onMenu }: { onMenu: () => void }) {
-  const pathname = normalise(usePathname() ?? '/')
+function TabBar({
+  pathname,
+  onAdd,
+  onMore,
+}: {
+  pathname: string
+  onAdd: () => void
+  onMore: () => void
+}) {
   const items = MOBILE_PRIMARY.map((h) => NAV.find((n) => n.href === h)!).filter(Boolean)
+  const left = items.slice(0, 2)
+  const right = items.slice(2)
+
+  const Tab = ({ item }: { item: NavItem }) => {
+    const active = pathname === item.href
+    return (
+      <Link
+        href={item.href}
+        className={`flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 text-[10.5px] font-medium ${
+          active ? 'text-accent' : 'text-ghost'
+        }`}
+      >
+        {item.icon}
+        <span>{item.label}</span>
+      </Link>
+    )
+  }
 
   return (
-    <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line-soft bg-ink/92 backdrop-blur-xl lg:hidden">
-      <div className="flex items-stretch">
-        {items.map((item) => {
-          const Icon = item.icon
-          const active = pathname === item.href
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[9.5px] tracking-wide transition-colors ${
-                active ? 'text-brass' : 'text-ghost'
-              }`}
-            >
-              <Icon />
-              <span className="truncate px-0.5">{item.label.split(' ')[0]}</span>
-            </Link>
-          )
-        })}
+    <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line-soft bg-ink/95 backdrop-blur-xl lg:hidden">
+      <div className="relative flex items-stretch">
+        {left.map((i) => (
+          <Tab key={i.href} item={i} />
+        ))}
+
+        {/* The one action used every day gets the most reachable spot. */}
+        <div className="flex w-[72px] shrink-0 items-center justify-center">
+          <button
+            onClick={onAdd}
+            aria-label="Add transaction"
+            className="-mt-6 flex h-14 w-14 items-center justify-center rounded-full border border-accent/40 bg-accent text-ink shadow-[0_10px_28px_-8px_rgba(212,167,44,0.7)] active:scale-95 transition-transform"
+          >
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+
+        {right.map((i) => (
+          <Tab key={i.href} item={i} />
+        ))}
+
         <button
-          onClick={onMenu}
-          aria-label="All sections"
-          className="flex flex-1 flex-col items-center gap-1 py-2.5 text-[9.5px] tracking-wide text-ghost"
+          onClick={onMore}
+          aria-label="More"
+          className="flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 text-[10.5px] font-medium text-ghost"
         >
-          <IconMenu />
+          <Ic d="M5 12h.01M12 12h.01M19 12h.01" />
           <span>More</span>
         </button>
       </div>
@@ -293,206 +266,32 @@ function MobileBar({ onMenu }: { onMenu: () => void }) {
   )
 }
 
-function Drawer({ pathname, onClose }: { pathname: string; onClose: () => void }) {
-  const { state, forecast } = useStore()
+function MoreMenu({ pathname, onClose }: { pathname: string; onClose: () => void }) {
+  const rest = NAV.filter((n) => !MOBILE_PRIMARY.includes(n.href))
 
   return (
-    <motion.div
-      className="fixed inset-0 z-50 lg:hidden"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-    >
-      <div className="absolute inset-0 bg-ink/80 backdrop-blur-sm" onClick={onClose} />
-      <motion.div
-        className="absolute inset-x-0 bottom-0 max-h-[86dvh] overflow-y-auto rounded-t-xl border-t border-line bg-panel pb-8"
-        initial={{ y: '100%' }}
-        animate={{ y: 0 }}
-        exit={{ y: '100%' }}
-        transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line-soft bg-panel px-5 py-4">
-          <div>
-            <div className="display text-[17px]">
-              Financial<span className="text-brass">.</span>OS
-            </div>
-            <div className="tnum mt-0.5 text-[11px] text-faint">
-              {money(forecast.openingTotal)} liquid
-            </div>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="p-2 text-faint">
-            <IconClose />
-          </button>
-        </div>
-
-        <div className="px-3 pt-3">
-          {GROUPS.map((group) => (
-            <div key={group} className="mb-4">
-              <div className="eyebrow px-2 pb-2">{group}</div>
-              <ul className="grid grid-cols-2 gap-1.5">
-                {NAV.filter((n) => n.group === group).map((item) => {
-                  const Icon = item.icon
-                  const active = pathname === item.href
-                  return (
-                    <li key={item.href}>
-                      <Link
-                        href={item.href}
-                        className={`flex items-center gap-2.5 rounded-[4px] border px-3 py-2.5 text-[12.5px] ${
-                          active
-                            ? 'border-brass/35 bg-brass-wash text-brass'
-                            : 'border-line-soft bg-panel-2 text-dim'
-                        }`}
-                      >
-                        <Icon />
-                        <span className="truncate">{item.label}</span>
-                      </Link>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          ))}
-          <p className="px-2 pb-2 pt-1 text-[10.5px] text-ghost">
-            {state.accounts.length} accounts · {state.bills.filter((b) => b.active).length} obligations ·{' '}
-            {longDate(today())}
-          </p>
-        </div>
-      </motion.div>
-    </motion.div>
-  )
-}
-
-/* ------------------------------------------------------------------ *
- * Command palette
- * ------------------------------------------------------------------ */
-
-function Palette({ onClose }: { onClose: () => void }) {
-  const router = useRouter()
-  const { state } = useStore()
-  const [q, setQ] = useState('')
-  const [cursor, setCursor] = useState(0)
-
-  const results = useMemo(() => {
-    const needle = q.toLowerCase().trim()
-    const pages = NAV.map((n) => ({
-      label: n.label,
-      hint: n.group,
-      href: n.href,
-    }))
-    const accounts = state.accounts.map((a) => ({
-      label: a.name,
-      hint: 'Account',
-      href: '/accounts',
-    }))
-    const all = [...pages, ...accounts]
-    if (!needle) return pages
-    return all.filter((r) => r.label.toLowerCase().includes(needle) || r.hint.toLowerCase().includes(needle))
-  }, [q, state.accounts])
-
-  const go = useCallback(
-    (href: string) => {
-      router.push(href)
-      onClose()
-    },
-    [router, onClose],
-  )
-
-  return (
-    <motion.div
-      className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[12vh]"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-    >
-      <div className="absolute inset-0 bg-ink/85 backdrop-blur-sm" onClick={onClose} />
-      <motion.div
-        className="panel-raised relative w-full max-w-[520px] overflow-hidden"
-        initial={{ y: -10, scale: 0.985 }}
-        animate={{ y: 0, scale: 1 }}
-        exit={{ y: -10, scale: 0.985 }}
-        transition={{ duration: 0.16 }}
-      >
-        <input
-          autoFocus
-          value={q}
-          placeholder="Jump to…"
-          onChange={(e) => {
-            setQ(e.target.value)
-            setCursor(0)
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') {
-              e.preventDefault()
-              setCursor((c) => Math.min(c + 1, results.length - 1))
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault()
-              setCursor((c) => Math.max(c - 1, 0))
-            } else if (e.key === 'Enter' && results[cursor]) {
-              go(results[cursor].href)
-            } else if (e.key === 'Escape') {
-              onClose()
-            }
-          }}
-          className="!rounded-none !border-0 !border-b !border-line !bg-transparent !px-4 !py-3.5 !text-[14px]"
-        />
-        <ul className="max-h-[320px] overflow-y-auto py-1.5">
-          {results.map((r, i) => (
-            <li key={`${r.href}-${r.label}`}>
-              <button
-                onMouseEnter={() => setCursor(i)}
-                onClick={() => go(r.href)}
-                className={`flex w-full items-center justify-between px-4 py-2 text-left text-[12.5px] ${
-                  i === cursor ? 'bg-panel-3 text-parchment' : 'text-dim'
+    <div className="fixed inset-0 z-50 lg:hidden">
+      <div className="sheet-backdrop absolute inset-0 bg-ink/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="card-raised sheet-panel safe-bottom absolute inset-x-0 bottom-0 rounded-b-none p-4">
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-surface-3" />
+        <ul className="grid grid-cols-2 gap-2">
+          {rest.map((item) => (
+            <li key={item.href}>
+              <Link
+                href={item.href}
+                className={`flex min-h-[56px] items-center gap-3 rounded-[var(--radius-control)] border px-4 text-[15px] ${
+                  pathname === item.href
+                    ? 'border-accent/40 bg-accent-wash text-accent'
+                    : 'border-line-soft bg-surface-2 text-muted'
                 }`}
               >
-                <span>{r.label}</span>
-                <span className="text-[10px] uppercase tracking-[0.1em] text-ghost">{r.hint}</span>
-              </button>
+                {item.icon}
+                {item.label}
+              </Link>
             </li>
           ))}
-          {!results.length && (
-            <li className="px-4 py-6 text-center text-[12px] text-ghost">Nothing matches</li>
-          )}
         </ul>
-        <div className="flex items-center gap-3 border-t border-line-soft px-4 py-2 text-[10px] text-ghost">
-          <span className="flex items-center gap-1">
-            <KeyHint>↑↓</KeyHint> navigate
-          </span>
-          <span className="flex items-center gap-1">
-            <KeyHint>↵</KeyHint> open
-          </span>
-          <span className="flex items-center gap-1">
-            <KeyHint>g</KeyHint> then a letter
-          </span>
-        </div>
-      </motion.div>
-    </motion.div>
-  )
-}
-
-/* ------------------------------------------------------------------ *
- * Footer
- * ------------------------------------------------------------------ */
-
-function Footer() {
-  const { forecast, ready } = useStore()
-  const breaches = forecast.flags.length
-
-  return (
-    <footer className="mt-14 border-t border-line-soft py-6 text-[10.5px] text-ghost">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span>
-          {longDate(today())} · projection to {forecast.days.length - 1} days
-        </span>
-        <span className="flex items-center gap-2">
-          {ready && breaches > 0 && (
-            <span className="flex items-center gap-1 text-caution">
-              <IconAlert /> {breaches} buffer event{breaches === 1 ? '' : 's'}
-            </span>
-          )}
-          <span>Data stored on this device only</span>
-        </span>
       </div>
-    </footer>
+    </div>
   )
 }

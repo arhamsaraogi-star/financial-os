@@ -3,247 +3,317 @@
 import { useRef, useState } from 'react'
 import { useStore } from '@/lib/store'
 import { money } from '@/lib/format'
-import { exportState, importState } from '@/lib/storage'
-import type { Settings } from '@/lib/types'
-import { Button, Field, KeyHint, PageHeader, Panel, Stat } from '@/components/ui'
+import { today } from '@/lib/dates'
+import { exportState, importState, transactionsToCsv } from '@/lib/storage'
+import { emptyState } from '@/lib/seed'
+import type { Category, Settings } from '@/lib/types'
+import { Button, Card, Field, PageHeader, Row, Sheet } from '@/components/ui'
 
-const SHORTCUTS: [string, string][] = [
-  ['⌘K / Ctrl K', 'Command palette'],
-  ['g then o', 'Overview'],
-  ['g then f', 'Cash flow'],
-  ['g then a', 'Accounts'],
-  ['g then i', 'Income'],
-  ['g then b', 'Obligations'],
-  ['g then s', 'Subscriptions'],
-  ['g then v', 'Investments'],
-  ['g then c', 'Credit'],
-  ['g then r', 'Reserve & goals'],
-  ['g then p', 'Reports'],
-  ['g then k', 'Ask the CFO'],
-  ['g then u', 'Automation'],
-  ['/', 'Focus the CFO question box'],
-  ['Esc', 'Close any overlay'],
-]
+const SWATCHES = ['#7FB08A', '#E0A458', '#6FA8C7', '#C77B7B', '#D4A72C', '#B58BC4', '#7FC4C0', '#8F9BD1', '#A98A6B', '#D98BA8', '#9C988E']
+const EMOJI = ['🛒', '🍜', '🚗', '🏠', '💡', '🛍️', '🩺', '🔁', '🏦', '🎬', '✈️', '🎓', '🐾', '🎁', '☕', '⛽', '📱', '•']
 
 export default function SettingsPage() {
   const { state, update, replace, reset, metrics } = useStore()
-  const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [editingCat, setEditingCat] = useState<Category | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const patch = (fields: Partial<Settings>) =>
     update((s) => ({ ...s, settings: { ...s.settings, ...fields } }))
 
-  const download = () => {
-    const blob = new Blob([exportState(state)], { type: 'application/json' })
+  const patchCat = (id: string, fields: Partial<Category>) =>
+    update((s) => ({ ...s, categories: s.categories.map((c) => (c.id === id ? { ...c, ...fields } : c)) }))
+
+  const download = (content: string, name: string, type: string) => {
+    const blob = new Blob([content], { type })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `financial-os-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = name
     a.click()
     URL.revokeObjectURL(url)
-    setMessage({ kind: 'ok', text: 'Backup downloaded.' })
   }
 
-  const upload = async (file: File) => {
-    try {
-      const next = importState(await file.text())
-      replace(next)
-      setMessage({ kind: 'ok', text: 'Backup restored.' })
-    } catch (err) {
-      setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Could not read that file.' })
+  const addCategory = () => {
+    const fresh: Category = {
+      id: `cat_${Date.now().toString(36)}`,
+      name: 'New category',
+      icon: '•',
+      colour: SWATCHES[state.categories.length % SWATCHES.length],
+      budget: 0,
+      kind: 'expense',
     }
+    update((s) => ({ ...s, categories: [...s.categories, fresh] }))
+    setEditingCat(fresh)
   }
 
   return (
-    <div className="rise">
-      <PageHeader
-        eyebrow="System"
-        title="Settings"
-        lede="The assumptions the engines run on. Changing conservatism or the discretionary run-rate re-computes every projection in the application immediately."
-      />
+    <div className="rise space-y-4 pb-4">
+      <PageHeader title="Settings" />
 
-      <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <Panel title="Profile">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Name">
-              <input
-                value={state.settings.ownerName}
-                onChange={(e) => patch({ ownerName: e.target.value })}
-              />
-            </Field>
-            <Field label="Risk tolerance" hint="Informs advice on how much surplus to commit.">
-              <select
-                value={state.settings.riskTolerance}
-                onChange={(e) => patch({ riskTolerance: e.target.value as Settings['riskTolerance'] })}
-              >
-                <option value="conservative">Conservative</option>
-                <option value="balanced">Balanced</option>
-                <option value="aggressive">Aggressive</option>
-              </select>
-            </Field>
-          </div>
-        </Panel>
-
-        <Panel title="Forecast assumptions">
-          <div className="space-y-4">
-            <Field
-              label={`Everyday spend — ${money(state.settings.discretionaryMonthly)} a month`}
-              hint="Groceries, transport, dining and anything else that is not a scheduled bill. The projection draws this weekly from your operating account."
-            >
-              <input
-                type="range"
-                min={0}
-                max={60000}
-                step={500}
-                value={state.settings.discretionaryMonthly}
-                onChange={(e) => patch({ discretionaryMonthly: Number(e.target.value) })}
-              />
-            </Field>
-
-            <Field
-              label={`Conservatism — ${Math.round(state.settings.forecastConservatism * 100)}%`}
-              hint="At 0 the forecast uses expected values. At 100 it assumes every receipt lands at the bottom of its range and every bill at the top. The default of 35% is deliberately pessimistic."
-            >
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={Math.round(state.settings.forecastConservatism * 100)}
-                onChange={(e) => patch({ forecastConservatism: Number(e.target.value) / 100 })}
-              />
-            </Field>
-
-            <Field
-              label={`Emergency fund target — ${state.settings.emergencyFundMonths} months`}
-              hint={`At your current burn rate of ${money(metrics.burnRate)} a month, that is ${money(
-                Math.round(metrics.burnRate * state.settings.emergencyFundMonths),
-              )}.`}
-            >
-              <input
-                type="range"
-                min={1}
-                max={12}
-                value={state.settings.emergencyFundMonths}
-                onChange={(e) => patch({ emergencyFundMonths: Number(e.target.value) })}
-              />
-            </Field>
-          </div>
-        </Panel>
-      </div>
-
-      <div className="mb-4 grid grid-cols-2 gap-px overflow-hidden rounded-[6px] border border-line-soft bg-line-soft lg:grid-cols-4">
-        <div className="bg-panel p-4">
-          <Stat label="Confidence-weighted income" value={money(metrics.income)} sub="Per month" />
-        </div>
-        <div className="bg-panel p-4">
-          <Stat label="Committed" value={money(metrics.commitments.total)} sub="Bills, subs and SIPs" />
-        </div>
-        <div className="bg-panel p-4">
-          <Stat label="Burn rate" value={money(metrics.burnRate)} sub="Excluding investment" />
-        </div>
-        <div className="bg-panel p-4">
-          <Stat
-            label="Surplus"
-            value={money(metrics.surplus)}
-            sub="Uncommitted each month"
-            tone={metrics.surplus >= 0 ? 'positive' : 'negative'}
-          />
-        </div>
-      </div>
-
-      <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <Panel title="Your data" subtitle="Stored in this browser and nowhere else">
-          <p className="mb-4 text-[12px] leading-relaxed text-dim">
-            Everything lives in this device&apos;s local storage — no account, no server, no third party holding
-            your balances. That also means clearing site data erases it, so keep a backup. The export is plain
-            JSON and restores into any browser running this application.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={download} variant="brass" size="sm">
-              Export backup
-            </Button>
-            <Button onClick={() => fileRef.current?.click()} size="sm">
-              Restore from file
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    'This erases every account, obligation, holding and rule you have entered, and restores the starting profile. Export a backup first if you want to keep it. Continue?',
-                  )
-                ) {
-                  reset()
-                  setMessage({ kind: 'ok', text: 'Reset to the starting profile.' })
-                }
-              }}
-            >
-              Reset everything
-            </Button>
-          </div>
+      <Card title="You">
+        <Field label="Name" hint="Only used for the greeting on the home screen.">
           <input
-            ref={fileRef}
-            type="file"
-            accept="application/json"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              if (f) void upload(f)
-              e.target.value = ''
-            }}
+            value={state.settings.ownerName}
+            placeholder="Your name"
+            onChange={(e) => patch({ ownerName: e.target.value })}
           />
-          {message && (
-            <p
-              className={`mt-3 text-[11.5px] ${message.kind === 'ok' ? 'text-positive' : 'text-negative'}`}
-            >
-              {message.text}
-            </p>
-          )}
-        </Panel>
+        </Field>
+      </Card>
 
-        <Panel title="Keyboard">
-          <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {SHORTCUTS.map(([keys, what]) => (
-              <li key={keys} className="flex items-center justify-between gap-3 text-[11.5px]">
-                <span className="text-dim">{what}</span>
-                <KeyHint>{keys}</KeyHint>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      </div>
+      <Card title="Forecast">
+        <div className="space-y-5">
+          <Field
+            label={`How cautious — ${Math.round(state.settings.forecastConservatism * 100)}%`}
+            hint="At 0 the forecast uses your usual amounts. Higher assumes income lands at the low end and bills at the high end. 30% is a sensible default."
+          >
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(state.settings.forecastConservatism * 100)}
+              onChange={(e) => patch({ forecastConservatism: Number(e.target.value) / 100 })}
+            />
+          </Field>
 
-      <Panel title="How the projection works" subtitle="No hidden model — this is the whole method">
-        <ol className="space-y-2.5 text-[12px] leading-relaxed text-dim">
-          <li className="border-l-2 border-line pl-3">
-            <span className="text-parchment">Expand.</span> Every income source, bill, subscription, SIP and
-            card statement is expanded into dated events across the horizon. Days-of-month clamp to the end of
-            short months, so a bill due on the 31st lands on the 28th in February rather than rolling into
-            March.
+          <Field
+            label={`Emergency fund target — ${state.settings.emergencyFundMonths} months`}
+            hint={
+              metrics.burnRate > 0
+                ? `You spend about ${money(metrics.burnRate)} a month, so that's ${money(
+                    Math.round(metrics.burnRate * state.settings.emergencyFundMonths),
+                  )}.`
+                : undefined
+            }
+          >
+            <input
+              type="range"
+              min={1}
+              max={12}
+              value={state.settings.emergencyFundMonths}
+              onChange={(e) => patch({ emergencyFundMonths: Number(e.target.value) })}
+            />
+          </Field>
+        </div>
+
+        <p className="mt-4 rounded-[var(--radius-control)] border border-line-soft bg-surface p-3 text-[12.5px] leading-relaxed text-ghost">
+          Everyday spending is measured from your transactions over the last 90 days — currently about{' '}
+          <span className="text-muted">{money(metrics.everyday)}</span> a month. There is no number to
+          type; log what you spend and it corrects itself.
+        </p>
+      </Card>
+
+      <Card title="Categories" padded={false} action={<Button size="sm" onClick={addCategory}>Add</Button>}>
+        <div className="divide-y divide-line-soft px-4">
+          {state.categories.map((c) => (
+            <Row
+              key={c.id}
+              icon={c.icon}
+              title={c.name}
+              subtitle={c.kind === 'income' ? 'Money in' : c.budget > 0 ? `${money(c.budget)} a month` : 'No budget'}
+              onClick={() => setEditingCat(c)}
+              trailing={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-ghost">
+                  <path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              }
+            />
+          ))}
+        </div>
+      </Card>
+
+      <Card title="Your data">
+        <p className="mb-4 text-[13.5px] leading-relaxed text-muted">
+          Everything is saved in this browser, on this device. No account, no server, nobody else holding
+          your balances. That also means clearing your browser data erases it — so keep a backup.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="accent"
+            onClick={() => {
+              download(exportState(state), `financial-os-${today()}.json`, 'application/json')
+              setMsg({ ok: true, text: 'Backup saved.' })
+            }}
+          >
+            Save backup
+          </Button>
+          <Button onClick={() => fileRef.current?.click()}>Restore</Button>
+          <Button
+            onClick={() => download(transactionsToCsv(state), `transactions-${today()}.csv`, 'text/csv')}
+          >
+            Export CSV
+          </Button>
+          <Button
+            onClick={() => {
+              if (window.confirm('Start over with no accounts or transactions? Save a backup first if you want to keep this.')) {
+                replace(emptyState())
+                setMsg({ ok: true, text: 'Cleared. Add your accounts to begin.' })
+              }
+            }}
+          >
+            Start empty
+          </Button>
+        </div>
+
+        <div className="mt-2">
+          <Button
+            variant="danger"
+            full
+            onClick={() => {
+              if (window.confirm('Reset everything back to the sample data? Anything you have entered will be lost.')) {
+                reset()
+                setMsg({ ok: true, text: 'Reset to the sample profile.' })
+              }
+            }}
+          >
+            Reset to sample data
+          </Button>
+        </div>
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={async (e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (!f) return
+            try {
+              replace(importState(await f.text()))
+              setMsg({ ok: true, text: 'Backup restored.' })
+            } catch (err) {
+              setMsg({ ok: false, text: err instanceof Error ? err.message : 'Could not read that file.' })
+            }
+          }}
+        />
+
+        {msg && <p className={`mt-3 text-[13px] ${msg.ok ? 'text-good' : 'text-bad'}`}>{msg.text}</p>}
+      </Card>
+
+      <Card title="How the forecast works">
+        <ol className="space-y-3 text-[13.5px] leading-relaxed text-muted">
+          <li>
+            <span className="text-text">It lists what's scheduled.</span> Every bill, subscription and
+            income date across the period. A bill due on the 31st lands on the 28th in February rather than
+            slipping into March.
           </li>
-          <li className="border-l-2 border-line pl-3">
-            <span className="text-parchment">Skew.</span> Each amount is pulled toward the pessimistic end of
-            its range by the conservatism setting — receipts toward their floor, obligations toward their
-            ceiling.
+          <li>
+            <span className="text-text">It leans pessimistic.</span> Income is nudged toward the low end of
+            its range and bills toward the high end, by however cautious you set it above.
           </li>
-          <li className="border-l-2 border-line pl-3">
-            <span className="text-parchment">Walk.</span> The simulation steps one day at a time, applying
-            events to individual account balances. Accounts are tracked separately because an aggregate can
-            look healthy while the account that pays rent is empty.
+          <li>
+            <span className="text-text">It walks day by day.</span> Each account is tracked separately,
+            because a healthy total can hide one account about to run dry.
           </li>
-          <li className="border-l-2 border-line pl-3">
-            <span className="text-parchment">Automate.</span> After each day&apos;s events, enabled rules run in
-            order. Transfers are capped at the source account&apos;s balance above its own floor, so automation
-            can never manufacture an overdraft.
-          </li>
-          <li className="border-l-2 border-line pl-3">
-            <span className="text-parchment">Score.</span> Risk is penalised for overdrafts first, floor
-            breaches second, how close the trough came to zero third, and the direction of net flow last.
-            Sustained pressure scores worse than a single bad day.
+          <li>
+            <span className="text-text">It moves money the way you would.</span> Your automatic transfer
+            rules run inside the forecast, capped so they can never overdraw the account they pull from.
           </li>
         </ol>
-      </Panel>
+      </Card>
+
+      <p className="px-1 text-center text-[12px] text-ghost">
+        {state.transactions.length} transactions · {state.accounts.filter((a) => !a.archived).length} accounts
+      </p>
+
+      {/* ---- Category editor ---------------------------------------------- */}
+      <Sheet
+        open={!!editingCat}
+        onClose={() => setEditingCat(null)}
+        title={editingCat ? `${editingCat.icon} ${editingCat.name}` : ''}
+        footer={
+          <div className="flex gap-2">
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (!editingCat) return
+                const used = state.transactions.some((t) => t.categoryId === editingCat.id)
+                if (used) {
+                  setMsg({ ok: false, text: 'That category is used by existing transactions.' })
+                  setEditingCat(null)
+                  return
+                }
+                update((s) => ({ ...s, categories: s.categories.filter((c) => c.id !== editingCat.id) }))
+                setEditingCat(null)
+              }}
+            >
+              Remove
+            </Button>
+            <Button variant="accent" size="lg" full onClick={() => setEditingCat(null)}>
+              Done
+            </Button>
+          </div>
+        }
+      >
+        {editingCat &&
+          (() => {
+            const c = state.categories.find((x) => x.id === editingCat.id) ?? editingCat
+            return (
+              <div className="space-y-4">
+                <Field label="Name">
+                  <input value={c.name} onChange={(e) => patchCat(c.id, { name: e.target.value })} />
+                </Field>
+
+                <div>
+                  <span className="label mb-2 block">Icon</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {EMOJI.map((i) => (
+                      <button
+                        key={i}
+                        onClick={() => patchCat(c.id, { icon: i })}
+                        className={`flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] border text-[19px] ${
+                          c.icon === i ? 'border-accent/50 bg-accent-wash' : 'border-line-soft bg-surface-2'
+                        }`}
+                      >
+                        {i}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="label mb-2 block">Colour</span>
+                  <div className="flex flex-wrap gap-2">
+                    {SWATCHES.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => patchCat(c.id, { colour: s })}
+                        aria-label={`Colour ${s}`}
+                        className={`h-9 w-9 rounded-full border-2 ${
+                          c.colour === s ? 'scale-110 border-text' : 'border-transparent'
+                        }`}
+                        style={{ background: s }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {c.kind === 'expense' && (
+                  <Field label="Monthly budget" hint="Leave empty for no budget.">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={c.budget || ''}
+                      placeholder="0"
+                      onChange={(e) => patchCat(c.id, { budget: Number(e.target.value) || 0 })}
+                    />
+                  </Field>
+                )}
+
+                <Field label="Type">
+                  <select
+                    value={c.kind}
+                    onChange={(e) => patchCat(c.id, { kind: e.target.value as Category['kind'] })}
+                  >
+                    <option value="expense">Money out</option>
+                    <option value="income">Money in</option>
+                  </select>
+                </Field>
+              </div>
+            )
+          })()}
+      </Sheet>
     </div>
   )
 }

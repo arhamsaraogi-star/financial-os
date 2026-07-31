@@ -4,10 +4,10 @@ import { financialState, type FinancialState } from '@/lib/types'
  * The one seam between the app and where data lives.
  *
  * Everything above this file is storage-agnostic: the engines take a
- * `FinancialState` and return numbers. Today that state is held in the browser,
- * which keeps financial data on the user's own machine and lets the whole system
- * deploy as static files. Swapping in Supabase + Clerk later means writing one
- * more object that satisfies this interface — no page or engine changes.
+ * `FinancialState` and return numbers. Today it is the browser, which keeps
+ * financial data on the user's own machine and lets the whole app deploy as
+ * static files. Moving to a server means writing one more object satisfying
+ * this interface — no engine or page changes.
  */
 export interface StateStore {
   load(): Promise<FinancialState | null>
@@ -15,16 +15,19 @@ export interface StateStore {
   clear(): Promise<void>
 }
 
-const KEY = 'fos.state.v1'
+const KEY = 'fos.state.v2'
+/** Keys from earlier schema versions, cleaned up on first successful load. */
+const LEGACY_KEYS = ['fos.state.v1']
 
 export const localStore: StateStore = {
   async load() {
     if (typeof window === 'undefined') return null
     try {
+      for (const old of LEGACY_KEYS) window.localStorage.removeItem(old)
       const raw = window.localStorage.getItem(KEY)
       if (!raw) return null
       const parsed = financialState.safeParse(JSON.parse(raw))
-      // A schema change should degrade to a fresh seed, never to a broken app.
+      // A schema change degrades to a fresh start, never to a broken app.
       return parsed.success ? parsed.data : null
     } catch {
       return null
@@ -36,7 +39,7 @@ export const localStore: StateStore = {
     try {
       window.localStorage.setItem(KEY, JSON.stringify(state))
     } catch {
-      // Quota or private-mode failure: the session still works, it just won't persist.
+      // Quota or private-mode failure: the session works, it just won't persist.
     }
   },
 
@@ -53,11 +56,30 @@ export function exportState(state: FinancialState): string {
 export function importState(json: string): FinancialState {
   const parsed = financialState.safeParse(JSON.parse(json))
   if (!parsed.success) {
-    throw new Error(
-      `That file is not a valid backup: ${parsed.error.issues[0]?.path.join('.')} ${
-        parsed.error.issues[0]?.message ?? ''
-      }`,
-    )
+    const issue = parsed.error.issues[0]
+    throw new Error(`That file isn't a valid backup: ${issue?.path.join('.')} ${issue?.message ?? ''}`)
   }
   return parsed.data
+}
+
+/** Comma-separated export of the ledger, for spreadsheets. */
+export function transactionsToCsv(state: FinancialState): string {
+  const cat = new Map(state.categories.map((c) => [c.id, c.name]))
+  const acc = new Map(state.accounts.map((a) => [a.id, a.name]))
+  const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+
+  const rows = [
+    ['Date', 'Description', 'Amount', 'Account', 'Category', 'Note'].join(','),
+    ...state.transactions.map((t) =>
+      [
+        t.date,
+        esc(t.description),
+        String(t.amount),
+        esc(acc.get(t.accountId) ?? ''),
+        esc(t.transfer ? 'Transfer' : (cat.get(t.categoryId) ?? '')),
+        esc(t.note ?? ''),
+      ].join(','),
+    ),
+  ]
+  return rows.join('\n')
 }

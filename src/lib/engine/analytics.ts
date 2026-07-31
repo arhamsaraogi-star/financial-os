@@ -1,144 +1,228 @@
-import type { FinancialState, Holding } from '@/lib/types'
-import { ISODate, daysBetween, monthKey, today } from '@/lib/dates'
+import type { Category, FinancialState, Transaction } from '@/lib/types'
+import { ISODate, addDays, daysInMonth, monthKey, today } from '@/lib/dates'
 import {
+  cashAccounts,
+  creditAccounts,
+  everydayBurnMonthly,
   expectedMonthlyIncome,
   monthlyCommitments,
   netWorth,
-  normaliseMonthly,
-} from './forecast'
+} from './derived'
+
+export { netWorth, monthlyCommitments, expectedMonthlyIncome, cashAccounts, creditAccounts }
 
 /* ------------------------------------------------------------------ *
- * Portfolio
+ * Transaction slicing
  * ------------------------------------------------------------------ */
 
-export function holdingValue(h: Holding) {
-  return h.units * h.currentPrice
+/** Real spending: excludes transfers between your own accounts. */
+export function isSpend(t: Transaction) {
+  return !t.transfer && t.amount < 0
 }
 
-export function holdingCost(h: Holding) {
-  return h.units * h.avgCost
+export function isIncome(t: Transaction) {
+  return !t.transfer && t.amount > 0
+}
+
+export function inMonth(t: Transaction, month: string) {
+  return monthKey(t.date) === month
+}
+
+export function currentMonth(): string {
+  return today().slice(0, 7)
+}
+
+export function previousMonth(month: string): string {
+  const y = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  const d = new Date(y, m - 2, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/* ------------------------------------------------------------------ *
+ * Category spending + budgets
+ * ------------------------------------------------------------------ */
+
+export interface CategorySpend {
+  category: Category
+  spent: number
+  budget: number
+  /** 0–1+, uncapped so overspend is visible. */
+  ratio: number
+  share: number
+  count: number
+  /** Same category, previous month. */
+  prior: number
+  change: number
+}
+
+export function spendByCategory(state: FinancialState, month = currentMonth()): CategorySpend[] {
+  const prev = previousMonth(month)
+  const now = new Map<string, { total: number; count: number }>()
+  const before = new Map<string, number>()
+
+  for (const t of state.transactions) {
+    if (!isSpend(t)) continue
+    const k = monthKey(t.date)
+    if (k === month) {
+      const cur = now.get(t.categoryId) ?? { total: 0, count: 0 }
+      now.set(t.categoryId, { total: cur.total + Math.abs(t.amount), count: cur.count + 1 })
+    } else if (k === prev) {
+      before.set(t.categoryId, (before.get(t.categoryId) ?? 0) + Math.abs(t.amount))
+    }
+  }
+
+  const grand = [...now.values()].reduce((s, v) => s + v.total, 0)
+
+  return state.categories
+    .filter((c) => c.kind === 'expense')
+    .map((category) => {
+      const hit = now.get(category.id) ?? { total: 0, count: 0 }
+      const prior = before.get(category.id) ?? 0
+      return {
+        category,
+        spent: hit.total,
+        count: hit.count,
+        budget: category.budget,
+        ratio: category.budget > 0 ? hit.total / category.budget : 0,
+        share: grand > 0 ? (hit.total / grand) * 100 : 0,
+        prior,
+        change: prior > 0 ? ((hit.total - prior) / prior) * 100 : 0,
+      }
+    })
+    .filter((r) => r.spent > 0 || r.budget > 0)
+    .sort((a, b) => b.spent - a.spent)
+}
+
+export interface BudgetSummary {
+  budgeted: number
+  /** Spend inside budgeted categories only — the like-for-like budget figure. */
+  spent: number
+  remaining: number
+  /** Every category, budgeted or not. What the user thinks of as "spent". */
+  totalSpent: number
+  /** Categories with a budget that are already over it. */
+  over: CategorySpend[]
+  /** Spending pace against how much of the month has elapsed. */
+  paceRatio: number
+  /** Month-end projection for budgeted categories. */
+  projectedSpend: number
+  /** Month-end projection across everything. */
+  projectedTotal: number
+  daysLeft: number
 }
 
 /**
- * Money-weighted return. Newton–Raphson on the NPV curve, bisection fallback
- * when the derivative is flat — a portfolio with irregular SIP dates is exactly
- * the case where a naive implementation diverges.
+ * Budget health for a month. The useful signal is not "have you overspent" but
+ * "are you on track to" — so this projects the month-end total from the pace so
+ * far and compares it to the budget.
  */
-export function xirr(flows: { date: ISODate; amount: number }[]): number | null {
-  if (flows.length < 2) return null
-  const base = flows[0].date
-  const points = flows.map((f) => ({ t: daysBetween(base, f.date) / 365, a: f.amount }))
-  // A rate only exists if money went both directions. The caller supplies
-  // today's market value as the closing inflow.
-  if (points.every((p) => p.a >= 0) || points.every((p) => p.a <= 0)) return null
+export function budgetSummary(state: FinancialState, month = currentMonth()): BudgetSummary {
+  const rows = spendByCategory(state, month)
+  const budgeted = rows.reduce((s, r) => s + r.budget, 0)
+  const spent = rows.filter((r) => r.budget > 0).reduce((s, r) => s + r.spent, 0)
+  const totalSpent = rows.reduce((s, r) => s + r.spent, 0)
 
-  const npv = (r: number) => points.reduce((s, p) => s + p.a / Math.pow(1 + r, p.t), 0)
+  const y = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  const total = daysInMonth(y, m)
+  const isCurrent = month === currentMonth()
+  const elapsed = isCurrent ? Number(today().slice(8, 10)) : total
+  const daysLeft = Math.max(0, total - elapsed)
 
-  let rate = 0.1
-  for (let i = 0; i < 60; i++) {
-    const f = npv(rate)
-    const step = 1e-5
-    const d = (npv(rate + step) - f) / step
-    if (!Number.isFinite(d) || Math.abs(d) < 1e-9) break
-    const next = rate - f / d
-    if (!Number.isFinite(next)) break
-    if (Math.abs(next - rate) < 1e-7) return clampRate(next)
-    rate = Math.max(-0.95, Math.min(10, next))
-  }
-
-  // Bisection fallback across a wide, well-behaved bracket.
-  let lo = -0.9
-  let hi = 5
-  if (npv(lo) * npv(hi) > 0) return null
-  for (let i = 0; i < 200; i++) {
-    const mid = (lo + hi) / 2
-    if (npv(lo) * npv(mid) <= 0) hi = mid
-    else lo = mid
-  }
-  return clampRate((lo + hi) / 2)
-}
-
-function clampRate(r: number): number | null {
-  if (!Number.isFinite(r) || r <= -0.999 || r > 10) return null
-  return r
-}
-
-export interface PortfolioSummary {
-  invested: number
-  current: number
-  absoluteGain: number
-  absoluteReturnPct: number
-  xirrPct: number | null
-  dividends: number
-  byAssetClass: { name: string; value: number; pct: number }[]
-  bySector: { name: string; value: number; pct: number }[]
-  byKind: { name: string; value: number; pct: number }[]
-}
-
-const KIND_LABEL: Record<Holding['kind'], string> = {
-  mutual_fund: 'Mutual Funds',
-  stock: 'Stocks',
-  etf: 'ETFs',
-  bond: 'Bonds',
-  gold: 'Gold',
-  cash: 'Cash',
-}
-
-export function portfolioSummary(state: FinancialState): PortfolioSummary {
-  const invested = state.holdings.reduce((s, h) => s + holdingCost(h), 0)
-  const current = state.holdings.reduce((s, h) => s + holdingValue(h), 0)
-  const absoluteGain = current - invested
-  const absoluteReturnPct = invested > 0 ? (absoluteGain / invested) * 100 : 0
-
-  // Every holding's flows, plus today's market value as the terminal inflow.
-  const flows = state.holdings.flatMap((h) => h.flows)
-  const allFlows = [...flows].sort((a, b) => (a.date < b.date ? -1 : 1))
-  if (current > 0) allFlows.push({ date: today(), amount: current })
-  const r = xirr(allFlows)
-
-  const group = (key: (h: Holding) => string) => {
-    const map = new Map<string, number>()
-    for (const h of state.holdings) {
-      const v = holdingValue(h)
-      map.set(key(h), (map.get(key(h)) ?? 0) + v)
-    }
-    return [...map.entries()]
-      .map(([name, value]) => ({ name, value, pct: current > 0 ? (value / current) * 100 : 0 }))
-      .sort((a, b) => b.value - a.value)
-  }
+  const projectedSpend = elapsed > 0 ? (spent / elapsed) * total : 0
+  const projectedTotal = elapsed > 0 ? (totalSpent / elapsed) * total : 0
 
   return {
-    invested,
-    current,
-    absoluteGain,
-    absoluteReturnPct,
-    xirrPct: r == null ? null : r * 100,
-    dividends: state.holdings.reduce((s, h) => s + (h.dividendsYtd ?? 0), 0),
-    byAssetClass: group((h) => h.assetClass[0].toUpperCase() + h.assetClass.slice(1)),
-    bySector: group((h) => h.sector),
-    byKind: group((h) => KIND_LABEL[h.kind]),
+    budgeted,
+    spent,
+    remaining: budgeted - spent,
+    totalSpent,
+    over: rows.filter((r) => r.budget > 0 && r.spent > r.budget),
+    paceRatio: budgeted > 0 ? projectedSpend / budgeted : 0,
+    projectedSpend,
+    projectedTotal,
+    daysLeft,
   }
 }
 
-/** Compound a monthly contribution + lump sum forward at a nominal annual rate. */
-export function projectCorpus(
-  current: number,
-  monthly: number,
-  annualRatePct: number,
-  years: number,
-): { year: number; value: number; contributed: number }[] {
-  const r = annualRatePct / 100 / 12
-  const out: { year: number; value: number; contributed: number }[] = []
-  let value = current
-  let contributed = current
-  for (let y = 1; y <= years; y++) {
-    for (let m = 0; m < 12; m++) {
-      value = value * (1 + r) + monthly
-      contributed += monthly
+/* ------------------------------------------------------------------ *
+ * Month rollups
+ * ------------------------------------------------------------------ */
+
+export interface MonthRollup {
+  month: string
+  label: string
+  income: number
+  spend: number
+  net: number
+  savingsRate: number
+}
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+export function monthLabel(month: string, withYear = false): string {
+  const m = Number(month.slice(5, 7))
+  return withYear ? `${MONTH_ABBR[m - 1]} ${month.slice(0, 4)}` : MONTH_ABBR[m - 1]
+}
+
+/**
+ * Month-by-month totals from the ledger, with recurring bills folded in.
+ *
+ * Bills are not written into the ledger — they live as schedules — so a rollup
+ * built purely from transactions would under-report spending badly. Committed
+ * amounts are added for every complete month.
+ */
+export function monthlyRollups(state: FinancialState, months = 6): MonthRollup[] {
+  const commitments = monthlyCommitments(state).total
+  const income = expectedMonthlyIncome(state)
+  const out: MonthRollup[] = []
+  const base = new Date()
+
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+
+    let ledgerSpend = 0
+    let ledgerIncome = 0
+    for (const t of state.transactions) {
+      if (monthKey(t.date) !== key) continue
+      if (isSpend(t)) ledgerSpend += Math.abs(t.amount)
+      else if (isIncome(t)) ledgerIncome += t.amount
     }
-    out.push({ year: y, value: Math.round(value), contributed: Math.round(contributed) })
+
+    const monthIncome = ledgerIncome > 0 ? ledgerIncome : income
+    const monthSpend = ledgerSpend + commitments
+
+    out.push({
+      month: key,
+      label: monthLabel(key),
+      income: Math.round(monthIncome),
+      spend: Math.round(monthSpend),
+      net: Math.round(monthIncome - monthSpend),
+      savingsRate: monthIncome > 0 ? ((monthIncome - monthSpend) / monthIncome) * 100 : 0,
+    })
   }
+
   return out
+}
+
+/** Daily spend for a month, for the calendar and the sparkline. */
+export function dailySpend(state: FinancialState, month = currentMonth()): { date: ISODate; amount: number }[] {
+  const y = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  const total = daysInMonth(y, m)
+  const map = new Map<string, number>()
+
+  for (const t of state.transactions) {
+    if (!isSpend(t) || monthKey(t.date) !== month) continue
+    map.set(t.date, (map.get(t.date) ?? 0) + Math.abs(t.amount))
+  }
+
+  return Array.from({ length: total }, (_, i) => {
+    const date = `${month}-${String(i + 1).padStart(2, '0')}`
+    return { date, amount: map.get(date) ?? 0 }
+  })
 }
 
 /* ------------------------------------------------------------------ *
@@ -146,212 +230,205 @@ export function projectCorpus(
  * ------------------------------------------------------------------ */
 
 export function creditSummary(state: FinancialState) {
-  const active = state.cards.filter((c) => c.active)
-  const limit = active.reduce((s, c) => s + c.limit, 0)
-  const balance = active.reduce((s, c) => s + c.currentBalance, 0)
-  const utilisation = limit > 0 ? (balance / limit) * 100 : 0
+  const cards = creditAccounts(state)
+  const limit = cards.reduce((s, c) => s + (c.creditLimit ?? 0), 0)
+  const owed = cards.reduce((s, c) => s + Math.abs(Math.min(0, c.balance)), 0)
+  const utilisation = limit > 0 ? (owed / limit) * 100 : 0
 
-  // Utilisation is the single largest controllable score input; the bands below
-  // mirror how bureaus actually treat it.
   const band =
     utilisation <= 10
       ? { label: 'Excellent', tone: 'good' as const }
       : utilisation <= 30
         ? { label: 'Healthy', tone: 'good' as const }
         : utilisation <= 50
-          ? { label: 'Elevated', tone: 'warn' as const }
-          : { label: 'Damaging', tone: 'bad' as const }
+          ? { label: 'High', tone: 'warn' as const }
+          : { label: 'Too high', tone: 'bad' as const }
 
-  const perCard = active.map((c) => ({
-    ...c,
-    utilisation: c.limit > 0 ? (c.currentBalance / c.limit) * 100 : 0,
-    available: c.limit - c.currentBalance,
-  }))
-
-  return { limit, balance, utilisation, band, perCard, available: limit - balance }
+  return {
+    cards: cards.map((c) => ({
+      account: c,
+      owed: Math.abs(Math.min(0, c.balance)),
+      limit: c.creditLimit ?? 0,
+      utilisation: c.creditLimit ? (Math.abs(Math.min(0, c.balance)) / c.creditLimit) * 100 : 0,
+      available: (c.creditLimit ?? 0) - Math.abs(Math.min(0, c.balance)),
+    })),
+    limit,
+    owed,
+    utilisation,
+    band,
+    available: limit - owed,
+    monthlyInterestIfCarried: cards.reduce(
+      (s, c) => s + (Math.abs(Math.min(0, c.balance)) * ((c.apr ?? 0) / 100)) / 12,
+      0,
+    ),
+  }
 }
 
 /* ------------------------------------------------------------------ *
- * Headline ratios
+ * Headline numbers
  * ------------------------------------------------------------------ */
 
 export interface Analytics {
   income: number
   commitments: ReturnType<typeof monthlyCommitments>
-  discretionary: number
+  everyday: number
+  burnRate: number
+  surplus: number
   savingsRate: number
   fixedExpenseRatio: number
-  investmentRate: number
-  burnRate: number
-  liquidityRatio: number
   cashRunwayMonths: number
   emergencyMonthsCovered: number
   netWorth: ReturnType<typeof netWorth>
-  surplus: number
+  monthSpend: number
+  monthIncome: number
 }
 
 export function analytics(state: FinancialState): Analytics {
   const income = expectedMonthlyIncome(state)
   const commitments = monthlyCommitments(state)
-  const discretionary = state.settings.discretionaryMonthly
-  const burnRate = commitments.bills + commitments.subs + discretionary
-  const surplus = income - burnRate - commitments.sips
+  const everyday = everydayBurnMonthly(state)
+  const burnRate = commitments.total + everyday
+  const surplus = income - burnRate
 
   const nw = netWorth(state)
-  const liquidCash = nw.cash
+  const month = currentMonth()
 
-  // Savings rate counts money that *stays yours* — investments included.
-  const saved = income - burnRate
-  const savingsRate = income > 0 ? (saved / income) * 100 : 0
-  const fixedExpenseRatio = income > 0 ? (commitments.bills / income) * 100 : 0
-  const investmentRate = income > 0 ? (commitments.sips / income) * 100 : 0
+  let monthSpend = 0
+  let monthIncome = 0
+  for (const t of state.transactions) {
+    if (!inMonth(t, month)) continue
+    if (isSpend(t)) monthSpend += Math.abs(t.amount)
+    else if (isIncome(t)) monthIncome += t.amount
+  }
 
-  const monthlyObligations = burnRate || 1
-  const cashRunwayMonths = liquidCash / monthlyObligations
-
-  const ef = state.goals.find((g) => g.kind === 'emergency_fund')
-  const emergencyMonthsCovered = ef ? ef.current / monthlyObligations : 0
-
-  const shortTermLiabilities = state.cards.reduce((s, c) => s + c.currentBalance, 0) + commitments.bills
-  const liquidityRatio = shortTermLiabilities > 0 ? liquidCash / shortTermLiabilities : Infinity
+  const ef = state.goals.find((g) => g.emergencyFund)
 
   return {
     income,
     commitments,
-    discretionary,
-    savingsRate,
-    fixedExpenseRatio,
-    investmentRate,
+    everyday,
     burnRate,
-    liquidityRatio,
-    cashRunwayMonths,
-    emergencyMonthsCovered,
-    netWorth: nw,
     surplus,
+    savingsRate: income > 0 ? (surplus / income) * 100 : 0,
+    fixedExpenseRatio: income > 0 ? (commitments.total / income) * 100 : 0,
+    cashRunwayMonths: burnRate > 0 ? nw.cash / burnRate : Infinity,
+    emergencyMonthsCovered: ef && burnRate > 0 ? ef.saved / burnRate : 0,
+    netWorth: nw,
+    monthSpend,
+    monthIncome,
   }
 }
 
-/**
- * A single 0–100 read on financial health. Weighted toward the things that
- * actually break a month: liquidity and buffer discipline, not vanity returns.
- */
+/** One 0–100 read on how things stand, weighted toward what breaks a month. */
 export function healthScore(state: FinancialState, riskScore: number) {
   const a = analytics(state)
   const credit = creditSummary(state)
+  const clamp = (n: number) => Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))
 
   const parts = [
-    { key: 'Cash flow safety', weight: 0.3, value: riskScore },
-    { key: 'Savings rate', weight: 0.2, value: clamp((a.savingsRate / 35) * 100) },
+    { key: 'Cash flow', weight: 0.35, value: riskScore },
+    { key: 'Saving', weight: 0.25, value: clamp((a.savingsRate / 30) * 100) },
     {
-      key: 'Emergency cover',
-      weight: 0.2,
-      value: clamp((a.emergencyMonthsCovered / state.settings.emergencyFundMonths) * 100),
+      key: 'Safety net',
+      weight: 0.25,
+      value: clamp((a.emergencyMonthsCovered / Math.max(1, state.settings.emergencyFundMonths)) * 100),
     },
-    { key: 'Credit health', weight: 0.15, value: clamp(100 - credit.utilisation * 2) },
-    { key: 'Investment rate', weight: 0.15, value: clamp((a.investmentRate / 20) * 100) },
+    { key: 'Credit', weight: 0.15, value: clamp(100 - credit.utilisation * 2) },
   ]
 
-  const total = Math.round(parts.reduce((s, p) => s + p.value * p.weight, 0))
-  return { total, parts }
-}
-
-function clamp(n: number) {
-  return Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0))
+  return { total: Math.round(parts.reduce((s, p) => s + p.value * p.weight, 0)), parts }
 }
 
 /* ------------------------------------------------------------------ *
- * History from the transaction ledger
- * ------------------------------------------------------------------ */
-
-export interface MonthRollup {
-  month: string
-  label: string
-  income: number
-  expense: number
-  invested: number
-  net: number
-  savingsRate: number
-}
-
-const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-export function monthlyRollups(state: FinancialState): MonthRollup[] {
-  const map = new Map<string, MonthRollup>()
-
-  for (const t of state.transactions) {
-    const k = monthKey(t.date)
-    if (!map.has(k)) {
-      const m = Number(k.slice(5, 7))
-      map.set(k, {
-        month: k,
-        label: `${MONTH_ABBR[m - 1]} ${k.slice(2, 4)}`,
-        income: 0,
-        expense: 0,
-        invested: 0,
-        net: 0,
-        savingsRate: 0,
-      })
-    }
-    const row = map.get(k)!
-    if (t.kind === 'income') row.income += Math.abs(t.amount)
-    else if (t.kind === 'investment') row.invested += Math.abs(t.amount)
-    else if (t.kind !== 'transfer') row.expense += Math.abs(t.amount)
-  }
-
-  return [...map.values()]
-    .sort((a, b) => (a.month < b.month ? -1 : 1))
-    .map((r) => ({
-      ...r,
-      net: r.income - r.expense - r.invested,
-      savingsRate: r.income > 0 ? ((r.income - r.expense) / r.income) * 100 : 0,
-    }))
-}
-
-/** Trailing-12 average of a rollup field, ignoring months with no income. */
-export function rolling12(rows: MonthRollup[], field: 'income' | 'expense' | 'invested'): number {
-  const last = rows.slice(-12).filter((r) => r.income > 0)
-  if (!last.length) return 0
-  return last.reduce((s, r) => s + r[field], 0) / last.length
-}
-
-export function growthRate(rows: MonthRollup[], field: 'income' | 'expense'): number {
-  if (rows.length < 4) return 0
-  const recent = rows.slice(-3).reduce((s, r) => s + r[field], 0) / 3
-  const prior = rows.slice(-6, -3).reduce((s, r) => s + r[field], 0) / 3
-  if (prior <= 0) return 0
-  return ((recent - prior) / prior) * 100
-}
-
-/* ------------------------------------------------------------------ *
- * Subscription intelligence
+ * Subscriptions
  * ------------------------------------------------------------------ */
 
 export function subscriptionInsights(state: FinancialState) {
-  const active = state.subscriptions.filter((s) => s.active)
-  const monthly = active.reduce((s, x) => s + normaliseMonthly(x.amount, x.cycle), 0)
-  const annual = monthly * 12
+  const subs = state.recurring.filter((r) => r.kind === 'subscription' && r.active)
+  const rows = subs
+    .map((s) => {
+      const monthly =
+        s.cadence === 'monthly' ? s.amount : s.cadence === 'quarterly' ? s.amount / 3 : s.amount / 12
+      return { recurring: s, monthly, yearly: monthly * 12 }
+    })
+    .sort((a, b) => b.monthly - a.monthly)
 
-  const rows = active.map((s) => {
-    const monthlyCost = normaliseMonthly(s.amount, s.cycle)
-    const monthsHeld = Math.max(1, Math.round(daysBetween(s.startedOn, today()) / 30))
-    const lifetime = monthlyCost * monthsHeld
-    // Cost per unit of value: high spend + low usage is what we want to surface.
-    const valueIndex = s.usageScore > 0 ? monthlyCost / s.usageScore : monthlyCost * 2
-    return { ...s, monthlyCost, lifetime, monthsHeld, valueIndex }
-  })
-
-  const cancelCandidates = rows
-    .filter((r) => r.usageScore < 4 && r.monthlyCost > 100)
-    .sort((a, b) => b.valueIndex - a.valueIndex)
-
-  const potentialSaving = cancelCandidates.reduce((s, r) => s + r.monthlyCost, 0)
+  const lowValue = rows.filter((r) => r.recurring.usage < 4 && r.monthly > 100)
 
   return {
-    rows: rows.sort((a, b) => b.monthlyCost - a.monthlyCost),
-    monthly,
-    annual,
-    lifetime: rows.reduce((s, r) => s + r.lifetime, 0),
-    cancelCandidates,
-    potentialSaving,
+    rows,
+    monthly: rows.reduce((s, r) => s + r.monthly, 0),
+    yearly: rows.reduce((s, r) => s + r.yearly, 0),
+    lowValue,
+    recoverable: lowValue.reduce((s, r) => s + r.monthly, 0),
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Descriptions the user types often — powers autocomplete
+ * ------------------------------------------------------------------ */
+
+export interface Suggestion {
+  description: string
+  categoryId: string
+  accountId: string
+  amount: number
+  count: number
+}
+
+export function frequentDescriptions(state: FinancialState, limit = 8): Suggestion[] {
+  const map = new Map<string, Suggestion>()
+
+  for (const t of state.transactions) {
+    if (t.transfer) continue
+    const key = t.description.trim().toLowerCase()
+    if (!key) continue
+    const cur = map.get(key)
+    if (cur) {
+      cur.count += 1
+      // Most recent wins for the prefilled values; transactions are newest-first.
+      continue
+    }
+    map.set(key, {
+      description: t.description.trim(),
+      categoryId: t.categoryId,
+      accountId: t.accountId,
+      amount: Math.abs(t.amount),
+      count: 1,
+    })
+  }
+
+  return [...map.values()].sort((a, b) => b.count - a.count).slice(0, limit)
+}
+
+/** Look up the best category guess for a description the user is typing. */
+export function guessCategory(state: FinancialState, description: string): string | null {
+  const needle = description.trim().toLowerCase()
+  if (needle.length < 2) return null
+  const hit = state.transactions.find((t) => t.description.trim().toLowerCase() === needle)
+  if (hit) return hit.categoryId
+  const partial = state.transactions.find((t) => t.description.toLowerCase().includes(needle))
+  return partial?.categoryId ?? null
+}
+
+/* ------------------------------------------------------------------ *
+ * Anomalies worth surfacing
+ * ------------------------------------------------------------------ */
+
+export function unusualTransactions(state: FinancialState, days = 30) {
+  const from = addDays(today(), -days)
+  const recent = state.transactions.filter((t) => isSpend(t) && t.date >= from)
+  if (recent.length < 8) return []
+
+  const amounts = recent.map((t) => Math.abs(t.amount))
+  const mean = amounts.reduce((s, v) => s + v, 0) / amounts.length
+  const sd = Math.sqrt(amounts.reduce((s, v) => s + (v - mean) ** 2, 0) / amounts.length)
+  if (sd === 0) return []
+
+  // Two standard deviations above the mean, which for spending data reliably
+  // surfaces the handful of purchases worth a second look.
+  return recent
+    .filter((t) => Math.abs(t.amount) > mean + sd * 2)
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+    .slice(0, 4)
 }

@@ -3,42 +3,42 @@
 /* ------------------------------------------------------------------ *
  * Palette
  *
- * Muted, warm, and low-chroma on purpose. Saturated dashboards read as
- * consumer software; wealth reads as restraint. Accents are brass and
- * desaturated jewel tones, never neon.
+ * Warm, dark, and higher-contrast than a desktop dashboard would need —
+ * this gets read on a phone, sometimes outdoors. Accents are brass and
+ * desaturated jewel tones; nothing neon.
  * ------------------------------------------------------------------ */
 @theme {
-  --color-ink: #08090b;
-  --color-panel: #0e1013;
-  --color-panel-2: #14171b;
-  --color-panel-3: #1a1e23;
-  --color-line: #23272e;
-  --color-line-soft: #191d22;
+  --color-ink: #0b0c0f;
+  --color-surface: #14161b;
+  --color-surface-2: #1c1f26;
+  --color-surface-3: #242833;
+  --color-line: #2a2f39;
+  --color-line-soft: #1f232b;
 
-  --color-parchment: #e9e5db;
-  --color-dim: #9c988e;
-  --color-faint: #6b6860;
-  --color-ghost: #47443f;
+  --color-text: #f1eee7;
+  --color-muted: #a8a49a;
+  --color-faint: #76726a;
+  --color-ghost: #4e4b45;
 
-  --color-brass: #c9a227;
-  --color-brass-deep: #8a7228;
-  --color-brass-wash: #2a2313;
+  --color-accent: #d4a72c;
+  --color-accent-deep: #8f7420;
+  --color-accent-wash: #2b2412;
 
-  --color-positive: #74a37f;
-  --color-negative: #b8564c;
-  --color-caution: #c28c3e;
-  --color-violet: #8f74a2;
-  --color-teal: #7a9e9f;
+  --color-good: #6fbf8b;
+  --color-bad: #e06c60;
+  --color-warn: #e0a458;
+  --color-info: #7fa8d4;
 
   --font-display: var(--font-serif), ui-serif, Georgia, serif;
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-mono-face), ui-monospace, 'SF Mono', monospace;
 
-  --radius-card: 6px;
+  --radius-card: 14px;
+  --radius-control: 10px;
 }
 
 /* ------------------------------------------------------------------ *
- * Base
+ * Base — 16px body. The previous build ran on 11–13px text, which is
+ * unreadable on a phone held at arm's length.
  * ------------------------------------------------------------------ */
 html {
   background: var(--color-ink);
@@ -47,107 +47,71 @@ html {
 
 body {
   background: var(--color-ink);
-  color: var(--color-parchment);
+  color: var(--color-text);
   font-family: var(--font-sans);
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  font-size: 16px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
   overflow-x: hidden;
-}
-
-/* A very fine film grain. At 2.5% it is invisible as texture and only
-   registers as "this surface has depth" — the trick print uses. */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  pointer-events: none;
-  opacity: 0.025;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  overscroll-behavior-y: none;
 }
 
 ::selection {
-  background: var(--color-brass);
-  color: #0b0c0e;
+  background: var(--color-accent);
+  color: #0b0c0f;
 }
 
-/* Numerals must never reflow as they tick. Every figure in the app uses this. */
+/* Numerals must not reflow as they change. Every figure uses this. */
 .tnum {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
 
-/* ------------------------------------------------------------------ *
- * Typography primitives
- * ------------------------------------------------------------------ */
 .display {
   font-family: var(--font-display);
   font-weight: 400;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
 }
 
-.eyebrow {
-  font-size: 10px;
-  letter-spacing: 0.16em;
+.label {
+  font-size: 11.5px;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--color-faint);
-  font-weight: 500;
-}
-
-.rule-gold {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--color-brass-deep) 18%,
-    var(--color-brass) 50%,
-    var(--color-brass-deep) 82%,
-    transparent
-  );
+  font-weight: 600;
 }
 
 /* ------------------------------------------------------------------ *
  * Surfaces
  * ------------------------------------------------------------------ */
-.panel {
-  background: linear-gradient(180deg, var(--color-panel) 0%, #0b0d10 100%);
+.card {
+  background: var(--color-surface);
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-card);
 }
 
-.panel-raised {
-  background: linear-gradient(180deg, var(--color-panel-2) 0%, var(--color-panel) 100%);
+.card-raised {
+  background: var(--color-surface-2);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-card);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.02) inset,
-    0 18px 40px -24px rgba(0, 0, 0, 0.9);
-}
-
-.hairline {
-  border-color: var(--color-line-soft);
+  box-shadow: 0 20px 44px -28px rgba(0, 0, 0, 0.95);
 }
 
 /* ------------------------------------------------------------------ *
- * Scrollbars — thin, brass on hover, invisible otherwise
+ * Touch targets — 44px is the minimum that reliably hits on a phone.
  * ------------------------------------------------------------------ */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-line) transparent;
+.tap {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
 }
-*::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--color-line);
-  border-radius: 4px;
-}
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--color-brass-deep);
+
+button,
+a,
+select,
+input,
+label {
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ------------------------------------------------------------------ *
@@ -156,64 +120,112 @@ body::before {
 input,
 select,
 textarea {
-  background: #0a0c0f;
+  background: var(--color-ink);
   border: 1px solid var(--color-line);
-  border-radius: 4px;
-  color: var(--color-parchment);
-  padding: 7px 10px;
-  font-size: 13px;
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  /* 16px prevents iOS Safari zooming the page when a field is focused. */
+  font-size: 16px;
+  padding: 11px 13px;
   width: 100%;
+  min-height: 46px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   font-variant-numeric: tabular-nums;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-ghost);
 }
 
 input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: var(--color-brass-deep);
-  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.09);
+  border-color: var(--color-accent-deep);
+  box-shadow: 0 0 0 3px rgba(212, 167, 44, 0.13);
+}
+
+textarea {
+  min-height: 76px;
+  line-height: 1.5;
 }
 
 input[type='range'] {
   padding: 0;
   border: none;
+  min-height: 0;
   background: transparent;
-  accent-color: var(--color-brass);
-  height: 22px;
+  accent-color: var(--color-accent);
+  height: 28px;
 }
 
 input[type='checkbox'] {
-  width: auto;
-  accent-color: var(--color-brass);
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--color-accent);
 }
 
 select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b6860' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' fill='none'%3E%3Cpath d='M1 1l4.5 4.5L10 1' stroke='%2376726a' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px;
+  background-position: right 13px center;
+  padding-right: 34px;
 }
 
 :focus-visible {
-  outline: 1px solid var(--color-brass-deep);
+  outline: 2px solid var(--color-accent-deep);
   outline-offset: 2px;
 }
 
+/* Hide number spinners — they are useless on a money field. */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
 /* ------------------------------------------------------------------ *
- * Recharts overrides — the defaults are far too loud
+ * Scrollbars
+ * ------------------------------------------------------------------ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 4px;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Recharts
  * ------------------------------------------------------------------ */
 .recharts-cartesian-grid line {
   stroke: var(--color-line-soft);
 }
 .recharts-text {
   fill: var(--color-faint);
-  font-size: 10px;
-}
-.recharts-curve.recharts-tooltip-cursor {
-  stroke: var(--color-brass-deep);
-  stroke-dasharray: 3 3;
+  font-size: 11px;
 }
 .recharts-surface:focus {
   outline: none;
@@ -225,7 +237,7 @@ select {
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(7px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -234,7 +246,49 @@ select {
 }
 
 .rise {
-  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Sheet entrance. Deliberately CSS rather than a JS animation: a CSS
+   animation cannot delay unmounting, so a sheet can never leave an invisible
+   overlay behind swallowing taps. */
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sheet-panel {
+  animation: sheet-in 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.sheet-backdrop {
+  animation: fade-in 0.18s ease-out both;
+}
+
+@media (min-width: 640px) {
+  @keyframes sheet-in {
+    from {
+      transform: translateY(12px) scale(0.985);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
 }
 
 @keyframes sheen {
@@ -247,14 +301,10 @@ select {
 }
 
 .sheen {
-  background: linear-gradient(
-    90deg,
-    var(--color-panel-2) 0%,
-    var(--color-panel-3) 45%,
-    var(--color-panel-2) 90%
-  );
+  background: linear-gradient(90deg, var(--color-surface) 0%, var(--color-surface-2) 45%, var(--color-surface) 90%);
   background-size: 200% 100%;
-  animation: sheen 1.5s ease-in-out infinite;
+  animation: sheen 1.4s ease-in-out infinite;
+  border-radius: var(--radius-card);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -267,7 +317,12 @@ select {
   }
 }
 
-/* Keep the mobile tab bar clear of the home indicator. */
+/* ------------------------------------------------------------------ *
+ * Safe areas — keep the tab bar and sheets clear of the home indicator
+ * ------------------------------------------------------------------ */
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
 }

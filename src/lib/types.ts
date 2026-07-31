@@ -7,154 +7,130 @@ import { z } from 'zod'
 /** ISO date, `YYYY-MM-DD`. Everything in the system is date-resolution. */
 export const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 
-export const priority = z.enum(['critical', 'high', 'medium', 'low'])
+export const priority = z.enum(['critical', 'high', 'normal'])
 export type Priority = z.infer<typeof priority>
 
 /**
- * What an account is *for*. Roles drive the rule engine and the funding
- * lookups, so nothing about the architecture is hardcoded to a bank name —
- * ICICI/AU/Axis are just the seed values for these three roles.
+ * What an account is for.
+ *
+ * Credit cards are accounts too, with a negative balance meaning money owed.
+ * Keeping them in one list means a transaction, a transfer and a balance work
+ * identically everywhere — the alternative was a parallel set of rules for
+ * cards that got every sign convention subtly wrong.
  */
-export const accountRole = z.enum([
-  'income_hub', // salary lands here, acts as the operating account
-  'bills', // every obligation is paid out of here
-  'reserve', // emergency fund, investment funding, spare liquidity
-  'investment', // brokerage / folio cash
-  'credit', // a liability, not an asset
+export const accountKind = z.enum([
+  'spending', // everyday account, where income lands
+  'bills', // dedicated account obligations are paid from
+  'savings', // reserve, emergency fund, goals
+  'credit', // a card. balance <= 0. -5000 means ₹5,000 owed.
 ])
-export type AccountRole = z.infer<typeof accountRole>
-
-/* ------------------------------------------------------------------ *
- * Accounts
- * ------------------------------------------------------------------ */
+export type AccountKind = z.infer<typeof accountKind>
 
 export const account = z.object({
   id: z.string(),
   name: z.string().min(1),
-  institution: z.string(),
-  role: accountRole,
+  institution: z.string().default(''),
+  kind: accountKind,
+  /** Cash held. For a credit account this is zero or negative. */
   balance: z.number(),
-  /** The balance this account *should* hold. Drives top-up recommendations. */
-  targetBalance: z.number().nonnegative(),
-  /** Hard floor. Dipping below this is a red event, not a warning. */
-  minBuffer: z.number().nonnegative(),
+  /** What this account should hold. Drives top-up suggestions. Cash only. */
+  targetBalance: z.number().nonnegative().default(0),
+  /** Falling below this is flagged. Cash only. */
+  minBuffer: z.number().nonnegative().default(0),
   accent: z.string(),
-  notes: z.string().optional(),
+  archived: z.boolean().default(false),
+  notes: z.string().default(''),
+
+  // Credit-only fields.
+  creditLimit: z.number().nonnegative().optional(),
+  statementDay: z.number().int().min(1).max(31).optional(),
+  dueDay: z.number().int().min(1).max(31).optional(),
+  apr: z.number().nonnegative().optional(),
+  /** Which account clears this card. Falls back to the bills account. */
+  paymentAccountId: z.string().optional(),
 })
 export type Account = z.infer<typeof account>
 
 /* ------------------------------------------------------------------ *
- * Income
+ * Categories
  * ------------------------------------------------------------------ */
 
-export const incomeSource = z.object({
+export const category = z.object({
   id: z.string(),
   name: z.string().min(1),
-  kind: z.enum(['salary', 'bond', 'allowance', 'freelance', 'other']),
-  expectedAmount: z.number().nonnegative(),
-  /** Expected range, because nothing here is a fixed number. */
-  minAmount: z.number().nonnegative(),
-  maxAmount: z.number().nonnegative(),
-  /** Arrival window as days-of-month, inclusive. e.g. salary 28 → 31. */
-  windowStart: z.number().int().min(1).max(31),
-  windowEnd: z.number().int().min(1).max(31),
-  accountId: z.string(),
-  /** 0–1. How reliably this has actually shown up. Decays the forecast. */
-  confidence: z.number().min(0).max(1),
-  /** Trailing receipts, newest last. Feeds average + variance. */
-  history: z.array(z.object({ date: isoDate, amount: z.number() })),
-  active: z.boolean(),
-  notes: z.string().optional(),
+  /** Single emoji. Cheap, universal, and needs no icon font. */
+  icon: z.string().default('•'),
+  colour: z.string(),
+  /** Monthly cap. 0 means untracked. */
+  budget: z.number().nonnegative().default(0),
+  kind: z.enum(['expense', 'income']).default('expense'),
 })
-export type IncomeSource = z.infer<typeof incomeSource>
+export type Category = z.infer<typeof category>
 
 /* ------------------------------------------------------------------ *
- * Obligations
+ * Transactions — the thing the user actually touches every day
  * ------------------------------------------------------------------ */
 
-export const bill = z.object({
+export const transaction = z.object({
   id: z.string(),
-  name: z.string().min(1),
-  category: z.string(),
-  expectedAmount: z.number().nonnegative(),
-  minAmount: z.number().nonnegative(),
-  maxAmount: z.number().nonnegative(),
-  dueDay: z.number().int().min(1).max(31),
-  /** Days of slack after the due date before this genuinely hurts. */
-  graceDays: z.number().int().min(0),
-  priority,
-  fundingAccountId: z.string(),
-  autopay: z.boolean(),
-  active: z.boolean(),
-  notes: z.string().optional(),
-})
-export type Bill = z.infer<typeof bill>
-
-export const subscription = z.object({
-  id: z.string(),
-  name: z.string().min(1),
-  category: z.string(),
-  amount: z.number().nonnegative(),
-  cycle: z.enum(['monthly', 'quarterly', 'annual']),
-  /** Day of month it renews (for annual, paired with renewalMonth). */
-  renewalDay: z.number().int().min(1).max(31),
-  renewalMonth: z.number().int().min(1).max(12).optional(),
+  date: isoDate,
+  /** What it was. Doubles as the autocomplete key. */
+  description: z.string().min(1),
+  /** Negative = money out, positive = money in. Always from the account's view. */
+  amount: z.number(),
   accountId: z.string(),
-  /** 0–10 self-rated. Below 4 with real spend triggers a cancel suggestion. */
-  usageScore: z.number().min(0).max(10),
-  startedOn: isoDate,
-  active: z.boolean(),
+  categoryId: z.string(),
+  note: z.string().default(''),
+  /** Moving money between your own accounts is not income or spending. */
+  transfer: z.boolean().default(false),
+  /** The other side of a transfer. */
+  transferAccountId: z.string().optional(),
+  /** Set when generated from a recurring rule, so it is not double-counted. */
+  recurringId: z.string().optional(),
 })
-export type Subscription = z.infer<typeof subscription>
+export type Transaction = z.infer<typeof transaction>
 
 /* ------------------------------------------------------------------ *
- * Investments
- * ------------------------------------------------------------------ */
+ * Recurring money — one shape for income, bills and subscriptions
+ * ------------------------------------------------------------------ *
+ *
+ * These were three separate entities. They differ only in sign and cadence,
+ * and keeping them apart meant three editors, three list screens and three
+ * sets of nearly identical code.
+ */
 
-export const holding = z.object({
+export const recurringKind = z.enum(['income', 'bill', 'subscription'])
+export type RecurringKind = z.infer<typeof recurringKind>
+
+export const recurring = z.object({
   id: z.string(),
   name: z.string().min(1),
-  ticker: z.string().optional(),
-  kind: z.enum(['mutual_fund', 'stock', 'etf', 'bond', 'gold', 'cash']),
-  units: z.number().nonnegative(),
-  avgCost: z.number().nonnegative(),
-  currentPrice: z.number().nonnegative(),
-  sector: z.string(),
-  assetClass: z.enum(['equity', 'debt', 'gold', 'cash', 'alternative']),
-  /** Cashflow log for XIRR: negative = invested, positive = redeemed. */
-  flows: z.array(z.object({ date: isoDate, amount: z.number() })),
-  dividendsYtd: z.number().nonnegative().default(0),
-})
-export type Holding = z.infer<typeof holding>
-
-export const sip = z.object({
-  id: z.string(),
-  name: z.string().min(1),
+  kind: recurringKind,
+  /** Always positive. `kind` decides the direction. */
   amount: z.number().nonnegative(),
+  /** Expected spread, for things like electricity. Equal values = fixed. */
+  minAmount: z.number().nonnegative(),
+  maxAmount: z.number().nonnegative(),
+  cadence: z.enum(['monthly', 'quarterly', 'annual']),
+  /** Day of month it lands or is due. */
   day: z.number().int().min(1).max(31),
+  /** For annual items. */
+  month: z.number().int().min(1).max(12).optional(),
+  /** Income only: the arrival window closes here. `day` is when it opens. */
+  dayEnd: z.number().int().min(1).max(31).optional(),
   accountId: z.string(),
-  holdingId: z.string().optional(),
-  active: z.boolean(),
+  categoryId: z.string(),
+  priority: priority.default('normal'),
+  /** Income only, 0–1. Scales the source down in the forecast. */
+  confidence: z.number().min(0).max(1).default(1),
+  /** Subscriptions only, 0–10. Low usage plus real spend gets flagged. */
+  usage: z.number().min(0).max(10).default(5),
+  autopay: z.boolean().default(false),
+  active: z.boolean().default(true),
+  startedOn: isoDate.optional(),
+  notes: z.string().default(''),
 })
-export type Sip = z.infer<typeof sip>
-
-/* ------------------------------------------------------------------ *
- * Credit
- * ------------------------------------------------------------------ */
-
-export const creditCard = z.object({
-  id: z.string(),
-  name: z.string().min(1),
-  issuer: z.string(),
-  limit: z.number().positive(),
-  currentBalance: z.number().nonnegative(),
-  statementDay: z.number().int().min(1).max(31),
-  dueDay: z.number().int().min(1).max(31),
-  paymentAccountId: z.string(),
-  apr: z.number().nonnegative(),
-  active: z.boolean(),
-})
-export type CreditCard = z.infer<typeof creditCard>
+export type Recurring = z.infer<typeof recurring>
 
 /* ------------------------------------------------------------------ *
  * Goals
@@ -163,35 +139,29 @@ export type CreditCard = z.infer<typeof creditCard>
 export const goal = z.object({
   id: z.string(),
   name: z.string().min(1),
-  kind: z.enum(['emergency_fund', 'purchase', 'travel', 'custom']),
+  icon: z.string().default('◎'),
+  emergencyFund: z.boolean().default(false),
   target: z.number().nonnegative(),
-  current: z.number().nonnegative(),
+  saved: z.number().nonnegative(),
   monthlyContribution: z.number().nonnegative(),
   accountId: z.string(),
   targetDate: isoDate.optional(),
-  priority,
 })
 export type Goal = z.infer<typeof goal>
 
 /* ------------------------------------------------------------------ *
- * Rule engine
+ * Rules
  * ------------------------------------------------------------------ */
 
 export const ruleTrigger = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('income_received'), incomeId: z.string().optional() }),
+  z.object({ type: z.literal('income_received'), recurringId: z.string().optional() }),
   z.object({ type: z.literal('account_below_target'), accountId: z.string() }),
-  z.object({ type: z.literal('account_above'), accountId: z.string(), amount: z.number() }),
-  z.object({ type: z.literal('goal_complete'), goalId: z.string() }),
   z.object({ type: z.literal('day_of_month'), day: z.number().int().min(1).max(31) }),
 ])
 export type RuleTrigger = z.infer<typeof ruleTrigger>
 
 export const ruleAction = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('top_up_to_target'),
-    fromAccountId: z.string(),
-    toAccountId: z.string(),
-  }),
+  z.object({ type: z.literal('top_up_to_target'), fromAccountId: z.string(), toAccountId: z.string() }),
   z.object({
     type: z.literal('transfer_fixed'),
     fromAccountId: z.string(),
@@ -202,11 +172,8 @@ export const ruleAction = z.discriminatedUnion('type', [
     type: z.literal('sweep_excess'),
     fromAccountId: z.string(),
     toAccountId: z.string(),
-    /** Leave this much behind in the source account. */
     keep: z.number().nonnegative(),
   }),
-  z.object({ type: z.literal('fund_sips'), fromAccountId: z.string() }),
-  z.object({ type: z.literal('recommend'), message: z.string() }),
 ])
 export type RuleAction = z.infer<typeof ruleAction>
 
@@ -216,56 +183,34 @@ export const rule = z.object({
   trigger: ruleTrigger,
   actions: z.array(ruleAction),
   enabled: z.boolean(),
-  /** Shown verbatim in the ledger so every automated move is explained. */
+  /** Plain-English reason, shown wherever this rule moves money. */
   rationale: z.string(),
   order: z.number().int(),
 })
 export type Rule = z.infer<typeof rule>
 
 /* ------------------------------------------------------------------ *
- * Ledger
- * ------------------------------------------------------------------ */
-
-export const transaction = z.object({
-  id: z.string(),
-  date: isoDate,
-  description: z.string(),
-  amount: z.number(),
-  accountId: z.string(),
-  category: z.string(),
-  kind: z.enum(['income', 'bill', 'subscription', 'investment', 'transfer', 'discretionary', 'credit']),
-})
-export type Transaction = z.infer<typeof transaction>
-
-/* ------------------------------------------------------------------ *
  * Settings + root
  * ------------------------------------------------------------------ */
 
 export const settings = z.object({
-  ownerName: z.string(),
-  currency: z.string(),
-  locale: z.string(),
-  /** Baseline day-to-day spend not captured by bills. Used in the forecast. */
-  discretionaryMonthly: z.number().nonnegative(),
-  emergencyFundMonths: z.number().positive(),
-  riskTolerance: z.enum(['conservative', 'balanced', 'aggressive']),
-  /** Forecast pessimism: 0 = use expected, 1 = use the low end of every range. */
-  forecastConservatism: z.number().min(0).max(1),
+  ownerName: z.string().default(''),
+  emergencyFundMonths: z.number().positive().default(6),
+  /** 0 = plan for expected amounts, 1 = plan for the worst end of every range. */
+  forecastConservatism: z.number().min(0).max(1).default(0.3),
+  /** Show the running-total column and denser tables. */
+  compact: z.boolean().default(false),
 })
 export type Settings = z.infer<typeof settings>
 
 export const financialState = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   settings,
   accounts: z.array(account),
-  income: z.array(incomeSource),
-  bills: z.array(bill),
-  subscriptions: z.array(subscription),
-  holdings: z.array(holding),
-  sips: z.array(sip),
-  cards: z.array(creditCard),
+  categories: z.array(category),
+  transactions: z.array(transaction),
+  recurring: z.array(recurring),
   goals: z.array(goal),
   rules: z.array(rule),
-  transactions: z.array(transaction),
 })
 export type FinancialState = z.infer<typeof financialState>

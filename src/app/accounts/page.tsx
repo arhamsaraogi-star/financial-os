@@ -3,288 +3,423 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '@/lib/store'
 import { money, moneyCompact } from '@/lib/format'
-import { monthKey, shortDate } from '@/lib/dates'
-import type { Account, AccountRole } from '@/lib/types'
-import { Sparkline } from '@/components/charts'
-import {
-  Badge,
-  Button,
-  Field,
-  Meter,
-  PageHeader,
-  Panel,
-  Stat,
-} from '@/components/ui'
-import { IconChevron, IconPlus, IconTrash } from '@/components/icons'
+import { nextDayOfMonth, relativeDays, shortDate } from '@/lib/dates'
+import type { Account, AccountKind } from '@/lib/types'
+import { creditSummary } from '@/lib/engine/analytics'
+import { Badge, Button, Card, Empty, Field, Meter, PageHeader, Row, Sheet } from '@/components/ui'
 
-const ROLE_COPY: Record<AccountRole, { label: string; job: string }> = {
-  income_hub: { label: 'Income hub', job: 'Receives salary and acts as the operating account for everyday spend.' },
-  bills: { label: 'Bills', job: 'Every obligation is paid from here. It must never run thin.' },
-  reserve: { label: 'Reserve', job: 'Holds the emergency fund, funds investments and absorbs timing gaps.' },
-  investment: { label: 'Investment', job: 'Brokerage or folio cash awaiting deployment.' },
-  credit: { label: 'Credit', job: 'A liability. Counts against net worth, never toward liquidity.' },
+const KIND_LABEL: Record<AccountKind, string> = {
+  spending: 'Spending',
+  bills: 'Bills',
+  savings: 'Savings',
+  credit: 'Credit card',
 }
 
-const PALETTE = ['#C9A227', '#7A9E9F', '#8F74A2', '#74A37F', '#C28C3E', '#B8564C']
+const KIND_HELP: Record<AccountKind, string> = {
+  spending: 'Where income lands and everyday spending comes from.',
+  bills: 'Rent, EMIs and card payments are paid from here.',
+  savings: 'Your reserve — emergency fund and goals.',
+  credit: 'A card. The balance shows what you owe.',
+}
+
+const PALETTE = ['#D4A72C', '#7A9E9F', '#8B6F9E', '#6FBF8B', '#E0A458', '#C77B7B', '#6FA8C7']
 
 export default function Accounts() {
-  const { state, update, forecast, horizon } = useStore()
-  const [editing, setEditing] = useState<string | null>(null)
+  const { state, update, forecast } = useStore()
+  const [editing, setEditing] = useState<Account | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  const credit = useMemo(() => creditSummary(state), [state])
+  const banks = state.accounts.filter((a) => a.kind !== 'credit' && !a.archived)
+  const cards = state.accounts.filter((a) => a.kind === 'credit' && !a.archived)
+  const totalCash = banks.reduce((s, a) => s + a.balance, 0)
 
   const patch = (id: string, fields: Partial<Account>) =>
     update((s) => ({ ...s, accounts: s.accounts.map((a) => (a.id === id ? { ...a, ...fields } : a)) }))
 
-  const remove = (id: string) =>
-    update((s) => ({ ...s, accounts: s.accounts.filter((a) => a.id !== id) }))
-
-  const add = () =>
-    update((s) => ({
-      ...s,
-      accounts: [
-        ...s.accounts,
-        {
-          id: `acc_${Date.now().toString(36)}`,
-          name: 'New account',
-          institution: '',
-          role: 'reserve',
-          balance: 0,
-          targetBalance: 0,
-          minBuffer: 0,
-          accent: PALETTE[s.accounts.length % PALETTE.length],
-        },
-      ],
-    }))
-
-  // Balance trail reconstructed by walking the ledger backwards from today.
-  const trails = useMemo(() => {
-    const out = new Map<string, number[]>()
-    for (const a of state.accounts) {
-      const byMonth = new Map<string, number>()
-      for (const t of state.transactions) {
-        if (t.accountId !== a.id) continue
-        byMonth.set(monthKey(t.date), (byMonth.get(monthKey(t.date)) ?? 0) + t.amount)
-      }
-      const months = [...byMonth.keys()].sort()
-      let running = a.balance
-      const series: number[] = [running]
-      for (let i = months.length - 1; i >= 0; i--) {
-        running -= byMonth.get(months[i]) ?? 0
-        series.unshift(running)
-      }
-      out.set(a.id, series.slice(-13))
+  const create = (kind: AccountKind) => {
+    const id = `acc_${Date.now().toString(36)}`
+    const fresh: Account = {
+      id,
+      name: kind === 'credit' ? 'New card' : 'New account',
+      institution: '',
+      kind,
+      balance: 0,
+      targetBalance: 0,
+      minBuffer: 0,
+      accent: PALETTE[state.accounts.length % PALETTE.length],
+      archived: false,
+      notes: '',
+      ...(kind === 'credit' ? { creditLimit: 100000, statementDay: 20, dueDay: 8, apr: 42 } : {}),
     }
-    return out
-  }, [state.accounts, state.transactions])
-
-  const liquid = state.accounts.filter((a) => a.role !== 'credit')
-  const total = liquid.reduce((s, a) => s + a.balance, 0)
-  const targetTotal = liquid.reduce((s, a) => s + a.targetBalance, 0)
+    update((s) => ({ ...s, accounts: [...s.accounts, fresh] }))
+    setCreating(false)
+    setEditing(fresh)
+  }
 
   return (
-    <div className="rise">
+    <div className="rise space-y-4 pb-4">
       <PageHeader
-        eyebrow="Architecture"
-        title="Accounts have responsibilities"
-        lede="Each account exists to do one job. The role drives the automation, so changing a role changes how money moves — nothing here is hardcoded to a bank."
-        actions={
-          <Button onClick={add} variant="brass" size="sm">
-            <IconPlus /> Account
+        title="Accounts"
+        lede="Each account has a job. That is what makes the forecast and the automatic transfers work."
+        action={
+          <Button size="sm" variant="accent" onClick={() => setCreating(true)}>
+            Add
           </Button>
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-px overflow-hidden rounded-[6px] border border-line-soft bg-line-soft lg:grid-cols-4">
-        <div className="bg-panel p-4">
-          <Stat label="Total liquid" value={money(total)} sub={`${liquid.length} cash accounts`} />
-        </div>
-        <div className="bg-panel p-4">
-          <Stat
-            label="Against target"
-            value={money(total - targetTotal)}
-            sub={`Targets total ${moneyCompact(targetTotal)}`}
-            tone={total >= targetTotal ? 'positive' : 'negative'}
+      {/* ---- Cash ------------------------------------------------------------ */}
+      <Card>
+        <div className="label mb-1.5">In the bank</div>
+        <div className="tnum display text-[34px] leading-none">{money(totalCash)}</div>
+        {credit.owed > 0 && (
+          <p className="mt-2 text-[13.5px] text-faint">
+            minus <span className="text-bad">{money(credit.owed)}</span> owed on cards ={' '}
+            <span className="text-text">{money(totalCash - credit.owed)}</span> net
+          </p>
+        )}
+      </Card>
+
+      {banks.length === 0 ? (
+        <Card>
+          <Empty
+            icon="🏦"
+            title="No accounts yet"
+            detail="Add your bank accounts so the app can track balances and forecast."
+            action={<Button variant="accent" onClick={() => setCreating(true)}>Add an account</Button>}
           />
-        </div>
-        <div className="bg-panel p-4">
-          <Stat
-            label="Automated moves"
-            value={`${forecast.automatedMoves.length}`}
-            sub={`Rule transfers over ${horizon} days`}
-          />
-        </div>
-        <div className="bg-panel p-4">
-          <Stat
-            label="Buffer events"
-            value={`${forecast.flags.length}`}
-            sub="Projected floor breaches"
-            tone={forecast.flags.length ? 'negative' : 'positive'}
-          />
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {state.accounts.map((a) => {
-          const series = trails.get(a.id) ?? []
-          const low = Math.min(...forecast.days.map((d) => d.byAccount[a.id] ?? a.balance))
-          const close = forecast.days[forecast.days.length - 1]?.byAccount[a.id] ?? a.balance
-          const inbound = forecast.events
-            .filter((e) => e.toAccountId === a.id)
-            .reduce((s, e) => s + e.amount, 0)
-          const outbound = forecast.events
-            .filter((e) => e.fromAccountId === a.id)
-            .reduce((s, e) => s + e.amount, 0)
-          const open = editing === a.id
-
-          return (
-            <Panel key={a.id} padded={false}>
-              <div className="p-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: a.accent }} />
-                      <h3 className="truncate text-[15px]">{a.name}</h3>
-                      <Badge tone={a.role === 'credit' ? 'negative' : 'neutral'}>
-                        {ROLE_COPY[a.role].label}
-                      </Badge>
-                      {low < a.minBuffer && a.role !== 'credit' && <Badge tone="caution">Dips below floor</Badge>}
-                    </div>
-                    <p className="mt-1.5 max-w-xl text-[11.5px] leading-relaxed text-ghost">
-                      {a.notes || ROLE_COPY[a.role].job}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <div className="tnum display text-[24px] leading-none">{money(a.balance)}</div>
-                      <div className="mt-1.5 text-[10.5px] text-ghost">{a.institution || '—'}</div>
-                    </div>
-                    <Sparkline values={series} colour={a.accent} />
-                    <button
-                      onClick={() => setEditing(open ? null : a.id)}
-                      className="rounded-[4px] border border-line p-1.5 text-faint transition-colors hover:border-brass-deep hover:text-brass"
-                      aria-label={open ? 'Close editor' : 'Edit account'}
-                    >
-                      <IconChevron className={open ? 'rotate-90 transition-transform' : 'transition-transform'} />
-                    </button>
-                  </div>
-                </div>
-
-                {a.role !== 'credit' && (
-                  <div className="mt-4">
-                    <Meter
-                      value={a.balance}
-                      max={Math.max(a.targetBalance, a.balance, 1)}
-                      notch={a.minBuffer}
-                      tone={a.balance < a.minBuffer ? 'negative' : 'brass'}
-                      height={4}
-                    />
-                    <div className="mt-3 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-5">
-                      <Cell label="Target" value={money(a.targetBalance)} />
-                      <Cell label="Floor" value={money(a.minBuffer)} />
-                      <Cell label={`Low (${horizon}d)`} value={money(low)} tone={low < a.minBuffer ? 'bad' : undefined} />
-                      <Cell label="Inbound" value={money(inbound)} tone="good" />
-                      <Cell label="Outbound" value={money(outbound)} tone="bad" />
-                    </div>
-                    <div className="mt-2 text-[10.5px] text-ghost">
-                      Projected close {money(close)} on{' '}
-                      {shortDate(forecast.days[forecast.days.length - 1]?.date ?? forecast.to)}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {open && (
-                <div className="border-t border-line-soft bg-panel-2/40 p-4">
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <Field label="Name">
-                      <input value={a.name} onChange={(e) => patch(a.id, { name: e.target.value })} />
-                    </Field>
-                    <Field label="Institution">
-                      <input
-                        value={a.institution}
-                        onChange={(e) => patch(a.id, { institution: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="Role" hint={ROLE_COPY[a.role].job}>
-                      <select
-                        value={a.role}
-                        onChange={(e) => patch(a.id, { role: e.target.value as AccountRole })}
-                      >
-                        {(Object.keys(ROLE_COPY) as AccountRole[]).map((r) => (
-                          <option key={r} value={r}>
-                            {ROLE_COPY[r].label}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Current balance">
-                      <input
-                        type="number"
-                        value={a.balance}
-                        onChange={(e) => patch(a.id, { balance: Number(e.target.value) })}
-                      />
-                    </Field>
-                    <Field label="Target balance" hint="What this account should hold when everything is in order.">
-                      <input
-                        type="number"
-                        value={a.targetBalance}
-                        onChange={(e) => patch(a.id, { targetBalance: Number(e.target.value) })}
-                      />
-                    </Field>
-                    <Field label="Hard floor" hint="Dropping below this is flagged as a risk event, not a warning.">
-                      <input
-                        type="number"
-                        value={a.minBuffer}
-                        onChange={(e) => patch(a.id, { minBuffer: Number(e.target.value) })}
-                      />
-                    </Field>
-                    <Field label="Notes">
-                      <input
-                        value={a.notes ?? ''}
-                        onChange={(e) => patch(a.id, { notes: e.target.value })}
-                        placeholder="What this account is for"
-                      />
-                    </Field>
-                    <Field label="Accent">
-                      <div className="flex gap-1.5 pt-1">
-                        {PALETTE.map((c) => (
-                          <button
-                            key={c}
-                            onClick={() => patch(a.id, { accent: c })}
-                            aria-label={`Set accent ${c}`}
-                            className={`h-6 w-6 rounded-full border-2 transition-transform ${
-                              a.accent === c ? 'scale-110 border-parchment' : 'border-transparent'
-                            }`}
-                            style={{ background: c }}
-                          />
-                        ))}
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {banks.map((a) => {
+            const low = Math.min(...forecast.days.map((d) => d.byAccount[a.id] ?? a.balance))
+            return (
+              <Card key={a.id} padded={false}>
+                <button onClick={() => setEditing(a)} className="w-full px-4 py-4 text-left active:opacity-70">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: a.accent }} />
+                        <span className="truncate text-[16px]">{a.name}</span>
+                        <Badge tone="neutral">{KIND_LABEL[a.kind]}</Badge>
                       </div>
-                    </Field>
+                      <p className="mt-1.5 text-[12.5px] text-faint">{a.institution || KIND_HELP[a.kind]}</p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="tnum display text-[22px] leading-none">{money(a.balance)}</div>
+                      {low < a.minBuffer && (
+                        <div className="mt-1.5 text-[11.5px] text-bad">dips to {moneyCompact(low)}</div>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-4 flex justify-end">
-                    <Button variant="danger" size="sm" onClick={() => remove(a.id)}>
-                      <IconTrash /> Remove account
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </Panel>
-          )
-        })}
-      </div>
+
+                  {a.targetBalance > 0 && (
+                    <div className="mt-3.5">
+                      <Meter
+                        value={a.balance}
+                        max={Math.max(a.targetBalance, a.balance, 1)}
+                        height={5}
+                        tone={a.balance < a.minBuffer ? 'bad' : 'accent'}
+                      />
+                      <div className="mt-1.5 flex justify-between text-[11.5px] text-ghost">
+                        <span>cushion {moneyCompact(a.minBuffer)}</span>
+                        <span>target {moneyCompact(a.targetBalance)}</span>
+                      </div>
+                    </div>
+                  )}
+                </button>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ---- Cards ------------------------------------------------------------ */}
+      {cards.length > 0 && (
+        <>
+          <div className="flex items-baseline justify-between px-1 pt-2">
+            <h2 className="label">Credit cards</h2>
+            <span className="tnum text-[12.5px] text-faint">
+              {credit.utilisation.toFixed(0)}% of {moneyCompact(credit.limit)} used
+            </span>
+          </div>
+
+          <Card>
+            <Meter
+              value={credit.utilisation}
+              max={100}
+              height={8}
+              tone={credit.utilisation <= 30 ? 'good' : credit.utilisation <= 50 ? 'warn' : 'bad'}
+            />
+            <div className="mt-2 flex justify-between text-[11.5px] text-ghost">
+              <span>0%</span>
+              <span className={credit.utilisation > 30 ? 'text-warn' : 'text-good'}>30% — keep under this</span>
+              <span>100%</span>
+            </div>
+            <p className="mt-3 text-[13px] leading-relaxed text-faint">
+              {credit.utilisation <= 30
+                ? `You are using ${credit.utilisation.toFixed(0)}% of your limit, which is the healthy range. What matters is the balance on the statement date, not the due date.`
+                : `Paying ${money(
+                    credit.owed - credit.limit * 0.3,
+                  )} before your statement date gets you back under 30%, which is where credit scores stop penalising you.`}
+            </p>
+          </Card>
+
+          <div className="space-y-2">
+            {cards.map((c) => {
+              const owed = Math.abs(Math.min(0, c.balance))
+              const util = c.creditLimit ? (owed / c.creditLimit) * 100 : 0
+              const due = c.dueDay ? nextDayOfMonth(c.dueDay) : null
+              return (
+                <Card key={c.id} padded={false}>
+                  <button onClick={() => setEditing(c)} className="w-full px-4 py-4 text-left active:opacity-70">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c.accent }} />
+                          <span className="truncate text-[16px]">{c.name}</span>
+                        </div>
+                        <p className="mt-1.5 text-[12.5px] text-faint">
+                          {due ? `Due ${shortDate(due)} · ${relativeDays(due)}` : 'No due date set'}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="tnum display text-[22px] leading-none text-bad">{money(owed)}</div>
+                        <div className="mt-1.5 text-[11.5px] text-ghost">
+                          of {moneyCompact(c.creditLimit ?? 0)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3.5">
+                      <Meter
+                        value={util}
+                        max={100}
+                        height={5}
+                        tone={util <= 30 ? 'good' : util <= 50 ? 'warn' : 'bad'}
+                      />
+                    </div>
+                  </button>
+                </Card>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {/* ---- Create ------------------------------------------------------------ */}
+      <Sheet open={creating} onClose={() => setCreating(false)} title="What kind of account?">
+        <div className="space-y-2 pb-2">
+          {(['spending', 'bills', 'savings', 'credit'] as AccountKind[]).map((k) => (
+            <button
+              key={k}
+              onClick={() => create(k)}
+              className="w-full rounded-[var(--radius-control)] border border-line bg-surface-2 p-4 text-left active:bg-surface-3"
+            >
+              <div className="text-[15.5px] text-text">{KIND_LABEL[k]}</div>
+              <div className="mt-1 text-[13px] text-faint">{KIND_HELP[k]}</div>
+            </button>
+          ))}
+        </div>
+      </Sheet>
+
+      {/* ---- Edit --------------------------------------------------------------- */}
+      <Sheet
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        title={editing?.name ?? ''}
+        footer={
+          <div className="flex gap-2">
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (editing && window.confirm(`Remove ${editing.name}? Its transactions stay in your history.`)) {
+                  update((s) => ({ ...s, accounts: s.accounts.filter((a) => a.id !== editing.id) }))
+                  setEditing(null)
+                }
+              }}
+            >
+              Remove
+            </Button>
+            <Button variant="accent" size="lg" full onClick={() => setEditing(null)}>
+              Done
+            </Button>
+          </div>
+        }
+      >
+        {editing && (
+          <AccountForm
+            account={state.accounts.find((a) => a.id === editing.id) ?? editing}
+            accounts={state.accounts}
+            patch={patch}
+          />
+        )}
+      </Sheet>
     </div>
   )
 }
 
-function Cell({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'bad' }) {
+function AccountForm({
+  account,
+  accounts,
+  patch,
+}: {
+  account: Account
+  accounts: Account[]
+  patch: (id: string, fields: Partial<Account>) => void
+}) {
+  const isCard = account.kind === 'credit'
+  const owed = Math.abs(Math.min(0, account.balance))
+
   return (
-    <div>
-      <div className="eyebrow mb-1">{label}</div>
-      <div
-        className={`tnum ${tone === 'good' ? 'text-positive' : tone === 'bad' ? 'text-negative' : 'text-dim'}`}
-      >
-        {value}
-      </div>
+    <div className="space-y-4">
+      <Field label="Name">
+        <input value={account.name} onChange={(e) => patch(account.id, { name: e.target.value })} />
+      </Field>
+
+      <Field label="Bank">
+        <input
+          value={account.institution}
+          onChange={(e) => patch(account.id, { institution: e.target.value })}
+          placeholder="ICICI Bank"
+        />
+      </Field>
+
+      <Field label="Type" hint={KIND_HELP[account.kind]}>
+        <select
+          value={account.kind}
+          onChange={(e) => patch(account.id, { kind: e.target.value as AccountKind })}
+        >
+          {(Object.keys(KIND_LABEL) as AccountKind[]).map((k) => (
+            <option key={k} value={k}>
+              {KIND_LABEL[k]}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {isCard ? (
+        <>
+          <Field label="Amount owed" hint="What you currently owe on this card.">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={owed || ''}
+              placeholder="0"
+              onChange={(e) => patch(account.id, { balance: -Math.abs(Number(e.target.value) || 0) })}
+            />
+          </Field>
+          <Field label="Credit limit">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={account.creditLimit ?? ''}
+              onChange={(e) => patch(account.id, { creditLimit: Number(e.target.value) || 0 })}
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Statement day">
+              <input
+                type="number"
+                inputMode="numeric"
+                value={account.statementDay ?? ''}
+                onChange={(e) =>
+                  patch(account.id, { statementDay: clampDay(e.target.value) })
+                }
+              />
+            </Field>
+            <Field label="Due day">
+              <input
+                type="number"
+                inputMode="numeric"
+                value={account.dueDay ?? ''}
+                onChange={(e) => patch(account.id, { dueDay: clampDay(e.target.value) })}
+              />
+            </Field>
+          </div>
+          <Field label="Interest rate %" hint="Used to show what carrying a balance costs you.">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={account.apr ?? ''}
+              onChange={(e) => patch(account.id, { apr: Number(e.target.value) || 0 })}
+            />
+          </Field>
+          <Field label="Paid from">
+            <select
+              value={account.paymentAccountId ?? ''}
+              onChange={(e) => patch(account.id, { paymentAccountId: e.target.value || undefined })}
+            >
+              <option value="">Bills account (automatic)</option>
+              {accounts
+                .filter((a) => a.kind !== 'credit' && !a.archived)
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+            </select>
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field label="Current balance">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={account.balance || ''}
+              placeholder="0"
+              onChange={(e) => patch(account.id, { balance: Number(e.target.value) || 0 })}
+            />
+          </Field>
+          <Field label="Target balance" hint="What this account should hold. Used for automatic top-ups.">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={account.targetBalance || ''}
+              placeholder="0"
+              onChange={(e) => patch(account.id, { targetBalance: Number(e.target.value) || 0 })}
+            />
+          </Field>
+          <Field label="Cushion" hint="Dropping below this gets flagged as a warning in the forecast.">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={account.minBuffer || ''}
+              placeholder="0"
+              onChange={(e) => patch(account.id, { minBuffer: Number(e.target.value) || 0 })}
+            />
+          </Field>
+        </>
+      )}
+
+      <Field label="Colour">
+        <div className="flex flex-wrap gap-2 pt-1">
+          {PALETTE.map((c) => (
+            <button
+              key={c}
+              onClick={() => patch(account.id, { accent: c })}
+              aria-label={`Colour ${c}`}
+              className={`h-9 w-9 rounded-full border-2 transition-transform ${
+                account.accent === c ? 'scale-110 border-text' : 'border-transparent'
+              }`}
+              style={{ background: c }}
+            />
+          ))}
+        </div>
+      </Field>
+
+      <Field label="Note">
+        <input
+          value={account.notes}
+          onChange={(e) => patch(account.id, { notes: e.target.value })}
+          placeholder="What this account is for"
+        />
+      </Field>
     </div>
   )
+}
+
+function clampDay(v: string) {
+  return Math.max(1, Math.min(31, Number(v) || 1))
 }

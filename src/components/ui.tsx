@@ -1,67 +1,53 @@
 'use client'
 
-import { ReactNode } from 'react'
-import { motion } from 'framer-motion'
-import { money, pct } from '@/lib/format'
+import { ReactNode, useEffect } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 
 /* ------------------------------------------------------------------ *
  * Page scaffolding
  * ------------------------------------------------------------------ */
 
 export function PageHeader({
-  eyebrow,
   title,
   lede,
-  actions,
+  action,
 }: {
-  eyebrow: string
   title: string
   lede?: string
-  actions?: ReactNode
+  action?: ReactNode
 }) {
   return (
-    <header className="mb-7">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <div className="eyebrow mb-2">{eyebrow}</div>
-          <h1 className="display text-[30px] leading-[1.1] sm:text-[38px]">{title}</h1>
-          {lede && (
-            <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-dim">{lede}</p>
-          )}
-        </div>
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    <header className="mb-5 flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <h1 className="display text-[30px] leading-[1.1] sm:text-[36px]">{title}</h1>
+        {lede && <p className="mt-1.5 max-w-xl text-[14px] leading-relaxed text-muted">{lede}</p>}
       </div>
-      <div className="rule-gold mt-5 h-px w-full opacity-40" />
+      {action && <div className="shrink-0 pt-1">{action}</div>}
     </header>
   )
 }
 
-export function Panel({
+export function Card({
   title,
-  subtitle,
-  actions,
+  action,
   children,
   className = '',
   raised = false,
   padded = true,
 }: {
   title?: string
-  subtitle?: string
-  actions?: ReactNode
+  action?: ReactNode
   children: ReactNode
   className?: string
   raised?: boolean
   padded?: boolean
 }) {
   return (
-    <section className={`${raised ? 'panel-raised' : 'panel'} ${className}`}>
-      {(title || actions) && (
-        <div className="flex items-center justify-between gap-3 border-b border-line-soft px-4 py-3">
-          <div className="min-w-0">
-            {title && <h2 className="eyebrow truncate">{title}</h2>}
-            {subtitle && <p className="mt-1 truncate text-[11px] text-ghost">{subtitle}</p>}
-          </div>
-          {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
+    <section className={`${raised ? 'card-raised' : 'card'} ${className}`}>
+      {(title || action) && (
+        <div className="flex items-center justify-between gap-3 px-4 pb-1 pt-4">
+          {title && <h2 className="label">{title}</h2>}
+          {action}
         </div>
       )}
       <div className={padded ? 'p-4' : ''}>{children}</div>
@@ -78,45 +64,28 @@ export function Stat({
   value,
   sub,
   tone = 'neutral',
-  large = false,
+  size = 'md',
 }: {
   label: string
   value: string
   sub?: ReactNode
-  tone?: 'neutral' | 'positive' | 'negative' | 'brass'
-  large?: boolean
+  tone?: 'neutral' | 'good' | 'bad' | 'accent'
+  size?: 'md' | 'lg'
 }) {
   const toneClass =
-    tone === 'positive'
-      ? 'text-positive'
-      : tone === 'negative'
-        ? 'text-negative'
-        : tone === 'brass'
-          ? 'text-brass'
-          : 'text-parchment'
-
+    tone === 'good' ? 'text-good' : tone === 'bad' ? 'text-bad' : tone === 'accent' ? 'text-accent' : 'text-text'
   return (
     <div className="min-w-0">
-      <div className="eyebrow mb-2 truncate">{label}</div>
+      <div className="label mb-1.5 truncate">{label}</div>
       <div
         className={`tnum display truncate ${toneClass} ${
-          large ? 'text-[30px] leading-none sm:text-[40px]' : 'text-[22px] leading-none sm:text-[26px]'
+          size === 'lg' ? 'text-[32px] leading-none sm:text-[40px]' : 'text-[23px] leading-none sm:text-[26px]'
         }`}
       >
         {value}
       </div>
-      {sub && <div className="mt-2 text-[11px] leading-snug text-faint">{sub}</div>}
+      {sub && <div className="mt-1.5 text-[12.5px] leading-snug text-faint">{sub}</div>}
     </div>
-  )
-}
-
-/** Signed change with the sign carried by colour as well as glyph. */
-export function Delta({ value, suffix = '%' }: { value: number; suffix?: string }) {
-  const up = value >= 0
-  return (
-    <span className={`tnum text-[11px] ${up ? 'text-positive' : 'text-negative'}`}>
-      {up ? '▲' : '▼'} {suffix === '%' ? pct(Math.abs(value)) : money(Math.abs(value))}
-    </span>
   )
 }
 
@@ -125,52 +94,48 @@ export function Badge({
   tone = 'neutral',
 }: {
   children: ReactNode
-  tone?: 'neutral' | 'positive' | 'negative' | 'caution' | 'brass' | 'violet'
+  tone?: 'neutral' | 'good' | 'bad' | 'warn' | 'accent' | 'info'
 }) {
   const map = {
-    neutral: 'border-line text-dim',
-    positive: 'border-positive/35 text-positive',
-    negative: 'border-negative/40 text-negative',
-    caution: 'border-caution/40 text-caution',
-    brass: 'border-brass/40 text-brass',
-    violet: 'border-violet/40 text-violet',
+    neutral: 'border-line text-muted',
+    good: 'border-good/40 text-good',
+    bad: 'border-bad/45 text-bad',
+    warn: 'border-warn/45 text-warn',
+    accent: 'border-accent/45 text-accent',
+    info: 'border-info/45 text-info',
   } as const
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded-[3px] border px-1.5 py-[3px] text-[9.5px] font-medium uppercase tracking-[0.1em] ${map[tone]}`}
+      className={`inline-flex shrink-0 items-center rounded-full border px-2 py-[3px] text-[11px] font-medium ${map[tone]}`}
     >
       {children}
     </span>
   )
 }
 
-/** Horizontal progress with an optional target notch. */
 export function Meter({
   value,
   max,
-  tone = 'brass',
-  height = 5,
-  notch,
+  tone = 'accent',
+  height = 8,
 }: {
   value: number
   max: number
-  tone?: 'brass' | 'positive' | 'negative' | 'caution' | 'violet' | 'teal'
+  tone?: 'accent' | 'good' | 'bad' | 'warn' | 'info'
   height?: number
-  notch?: number
 }) {
   const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0
   const colour = {
-    brass: 'var(--color-brass)',
-    positive: 'var(--color-positive)',
-    negative: 'var(--color-negative)',
-    caution: 'var(--color-caution)',
-    violet: 'var(--color-violet)',
-    teal: 'var(--color-teal)',
+    accent: 'var(--color-accent)',
+    good: 'var(--color-good)',
+    bad: 'var(--color-bad)',
+    warn: 'var(--color-warn)',
+    info: 'var(--color-info)',
   }[tone]
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-full bg-panel-3"
+      className="w-full overflow-hidden rounded-full bg-surface-3"
       style={{ height }}
       role="progressbar"
       aria-valuenow={Math.round(ratio * 100)}
@@ -182,14 +147,8 @@ export function Meter({
         style={{ background: colour }}
         initial={{ width: 0 }}
         animate={{ width: `${ratio * 100}%` }}
-        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
       />
-      {notch != null && max > 0 && (
-        <div
-          className="absolute top-0 h-full w-px bg-parchment/45"
-          style={{ left: `${Math.min(100, (notch / max) * 100)}%` }}
-        />
-      )}
     </div>
   )
 }
@@ -205,23 +164,30 @@ export function Button({
   size = 'md',
   type = 'button',
   disabled,
+  full,
   title,
 }: {
   children: ReactNode
   onClick?: () => void
-  variant?: 'ghost' | 'brass' | 'danger'
-  size?: 'sm' | 'md'
+  variant?: 'ghost' | 'accent' | 'danger' | 'plain'
+  size?: 'sm' | 'md' | 'lg'
   type?: 'button' | 'submit'
   disabled?: boolean
+  full?: boolean
   title?: string
 }) {
-  const base =
-    'inline-flex items-center justify-center gap-1.5 rounded-[4px] border font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40'
-  const sizing = size === 'sm' ? 'px-2.5 py-1 text-[11px]' : 'px-3.5 py-1.5 text-[12px]'
+  const sizing =
+    size === 'sm'
+      ? 'px-3 py-2 text-[13px] min-h-[38px]'
+      : size === 'lg'
+        ? 'px-5 py-3.5 text-[16px] min-h-[52px]'
+        : 'px-4 py-2.5 text-[14px] min-h-[44px]'
+
   const variants = {
-    ghost: 'border-line bg-panel-2 text-dim hover:border-brass-deep hover:text-parchment',
-    brass: 'border-brass/50 bg-brass-wash text-brass hover:bg-brass/15',
-    danger: 'border-negative/40 bg-negative/10 text-negative hover:bg-negative/20',
+    ghost: 'border border-line bg-surface-2 text-muted active:bg-surface-3',
+    accent: 'border border-accent/50 bg-accent-wash text-accent active:bg-accent/20',
+    danger: 'border border-bad/45 bg-bad/10 text-bad active:bg-bad/20',
+    plain: 'border border-transparent text-faint active:text-text',
   } as const
 
   return (
@@ -230,7 +196,9 @@ export function Button({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`${base} ${sizing} ${variants[variant]}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)] font-medium transition-colors disabled:opacity-40 ${sizing} ${
+        variants[variant]
+      } ${full ? 'w-full' : ''}`}
     >
       {children}
     </button>
@@ -248,13 +216,14 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="eyebrow mb-1.5 block">{label}</span>
+      <span className="label mb-2 block">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[10.5px] leading-snug text-ghost">{hint}</span>}
+      {hint && <span className="mt-1.5 block text-[12px] leading-snug text-ghost">{hint}</span>}
     </label>
   )
 }
 
+/** Horizontally scrollable on small screens so options never wrap awkwardly. */
 export function Segmented<T extends string | number>({
   options,
   value,
@@ -265,15 +234,15 @@ export function Segmented<T extends string | number>({
   onChange: (v: T) => void
 }) {
   return (
-    <div className="inline-flex overflow-hidden rounded-[4px] border border-line bg-panel-2">
+    <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1">
       {options.map((o) => (
         <button
           key={String(o.value)}
           onClick={() => onChange(o.value)}
-          className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+          className={`shrink-0 rounded-full border px-3.5 py-2 text-[13px] font-medium transition-colors ${
             value === o.value
-              ? 'bg-brass-wash text-brass'
-              : 'text-faint hover:text-parchment'
+              ? 'border-accent/50 bg-accent-wash text-accent'
+              : 'border-line bg-surface-2 text-faint'
           }`}
         >
           {o.label}
@@ -283,104 +252,194 @@ export function Segmented<T extends string | number>({
   )
 }
 
-/* ------------------------------------------------------------------ *
- * Misc
- * ------------------------------------------------------------------ */
-
-export function Empty({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex min-h-[110px] items-center justify-center px-4 py-8 text-center text-[12px] text-ghost">
-      {children}
-    </div>
-  )
-}
-
-/** Horizontally scrollable wrapper — dense tables must never break the page. */
-export function ScrollX({ children }: { children: ReactNode }) {
-  return <div className="-mx-4 overflow-x-auto px-4">{children}</div>
-}
-
-export function Th({ children, align = 'left' }: { children: ReactNode; align?: 'left' | 'right' }) {
-  return (
-    <th
-      className={`eyebrow whitespace-nowrap px-2 py-2 first:pl-0 last:pr-0 ${
-        align === 'right' ? 'text-right' : 'text-left'
-      }`}
-    >
-      {children}
-    </th>
-  )
-}
-
-export function Td({
-  children,
-  className = '',
-  wrap = false,
+export function Toggle({
+  checked,
+  onChange,
+  label,
 }: {
-  children: ReactNode
-  className?: string
-  wrap?: boolean
+  checked: boolean
+  onChange: (v: boolean) => void
+  label: string
 }) {
   return (
-    <td
-      className={`px-2 py-2.5 first:pl-0 last:pr-0 ${wrap ? '' : 'whitespace-nowrap'} ${className}`}
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left"
     >
-      {children}
-    </td>
+      <span className="text-[15px] text-text">{label}</span>
+      <span
+        className={`relative h-[28px] w-[48px] shrink-0 rounded-full transition-colors ${
+          checked ? 'bg-accent' : 'bg-surface-3'
+        }`}
+      >
+        <motion.span
+          className="absolute top-[3px] h-[22px] w-[22px] rounded-full bg-ink"
+          animate={{ left: checked ? 23 : 3 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+        />
+      </span>
+    </button>
   )
 }
 
-export function KeyHint({ children }: { children: ReactNode }) {
-  return (
-    <kbd className="rounded-[3px] border border-line bg-panel-2 px-1.5 py-0.5 font-mono text-[9.5px] text-faint">
-      {children}
-    </kbd>
-  )
-}
+/* ------------------------------------------------------------------ *
+ * Bottom sheet — the primary modal on a phone
+ * ------------------------------------------------------------------ */
 
-export function RiskDial({ score, level }: { score: number; level: string }) {
-  const tone =
-    score >= 82
-      ? 'var(--color-positive)'
-      : score >= 62
-        ? 'var(--color-brass)'
-        : score >= 38
-          ? 'var(--color-caution)'
-          : 'var(--color-negative)'
-  const r = 34
-  const circumference = 2 * Math.PI * r
-  const dash = (score / 100) * circumference
+export function Sheet({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+}: {
+  open: boolean
+  onClose: () => void
+  title: string
+  children: ReactNode
+  footer?: ReactNode
+}) {
+  // Lock the page behind the sheet so scrolling inside it doesn't move the list.
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
+
+  // Mounted purely off `open` — no exit animation, and therefore no way for a
+  // faded-out overlay to linger and swallow taps on the page beneath it. That
+  // failure mode makes the whole app feel broken, which is a far worse trade
+  // than losing a 200ms dismissal animation.
+  if (!open) return null
 
   return (
-    <div className="flex items-center gap-4">
-      <div className="relative h-[84px] w-[84px] shrink-0">
-        <svg viewBox="0 0 84 84" className="h-full w-full -rotate-90">
-          <circle cx="42" cy="42" r={r} fill="none" stroke="var(--color-line)" strokeWidth="5" />
-          <motion.circle
-            cx="42"
-            cy="42"
-            r={r}
-            fill="none"
-            stroke={tone}
-            strokeWidth="5"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            initial={{ strokeDashoffset: circumference }}
-            animate={{ strokeDashoffset: circumference - dash }}
-            transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-          />
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="tnum display text-[24px] leading-none">{score}</span>
-          <span className="text-[8.5px] uppercase tracking-[0.14em] text-ghost">of 100</span>
+    <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center">
+      <div className="sheet-backdrop absolute inset-0 bg-ink/80 backdrop-blur-sm" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="card-raised sheet-panel safe-bottom relative flex max-h-[92dvh] w-full flex-col rounded-b-none sm:max-w-[480px] sm:rounded-b-[var(--radius-card)]"
+      >
+        <div className="shrink-0 px-5 pb-3 pt-3">
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-surface-3 sm:hidden" />
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="display text-[21px]">{title}</h2>
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="-mr-2 flex h-11 w-11 items-center justify-center rounded-full text-faint active:bg-surface-3"
+            >
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
-      <div className="min-w-0">
-        <div className="eyebrow mb-1">Cash-flow risk</div>
-        <div className="display text-[19px] capitalize leading-tight" style={{ color: tone }}>
-          {level}
-        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">{children}</div>
+
+        {footer && <div className="shrink-0 border-t border-line-soft px-5 py-3">{footer}</div>}
       </div>
     </div>
   )
+}
+
+/* ------------------------------------------------------------------ *
+ * Lists
+ * ------------------------------------------------------------------ */
+
+/** A tappable list row. Used for transactions, bills, accounts — everything. */
+export function Row({
+  icon,
+  title,
+  subtitle,
+  value,
+  valueTone = 'neutral',
+  valueSub,
+  onClick,
+  trailing,
+}: {
+  icon?: ReactNode
+  title: ReactNode
+  subtitle?: ReactNode
+  value?: string
+  valueTone?: 'neutral' | 'good' | 'bad' | 'muted'
+  valueSub?: string
+  onClick?: () => void
+  trailing?: ReactNode
+}) {
+  const tone =
+    valueTone === 'good' ? 'text-good' : valueTone === 'bad' ? 'text-bad' : valueTone === 'muted' ? 'text-faint' : 'text-text'
+
+  const inner = (
+    <>
+      {icon && (
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[17px]">
+          {icon}
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px] text-text">{title}</span>
+        {subtitle && <span className="mt-0.5 block truncate text-[12.5px] text-faint">{subtitle}</span>}
+      </span>
+      {value && (
+        <span className="shrink-0 text-right">
+          <span className={`tnum block text-[15px] ${tone}`}>{value}</span>
+          {valueSub && <span className="mt-0.5 block text-[11.5px] text-ghost">{valueSub}</span>}
+        </span>
+      )}
+      {trailing}
+    </>
+  )
+
+  const cls = 'flex w-full items-center gap-3 py-3 text-left'
+
+  return onClick ? (
+    <button onClick={onClick} className={`${cls} active:opacity-60`}>
+      {inner}
+    </button>
+  ) : (
+    <div className={cls}>{inner}</div>
+  )
+}
+
+export function Divider() {
+  return <div className="h-px bg-line-soft" />
+}
+
+export function Empty({
+  icon = '◦',
+  title,
+  detail,
+  action,
+}: {
+  icon?: string
+  title: string
+  detail?: string
+  action?: ReactNode
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
+      <div className="mb-3 text-[30px] opacity-50">{icon}</div>
+      <p className="text-[15px] text-muted">{title}</p>
+      {detail && <p className="mt-1.5 max-w-xs text-[13px] leading-relaxed text-ghost">{detail}</p>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  )
+}
+
+/** Wide content (tables, charts) scrolls inside this — the page never does. */
+export function ScrollX({ children }: { children: ReactNode }) {
+  return <div className="no-scrollbar -mx-4 overflow-x-auto px-4">{children}</div>
 }
