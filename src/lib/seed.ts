@@ -455,6 +455,7 @@ export function seedState(): FinancialState {
     ],
 
     transactions: buildHistory(rand),
+    deletedTransactionIds: [],
   }
 }
 
@@ -541,5 +542,6 @@ export function emptyState(): FinancialState {
     recurring: [],
     goals: [],
     rules: [],
+    deletedTransactionIds: [],
   }
 }

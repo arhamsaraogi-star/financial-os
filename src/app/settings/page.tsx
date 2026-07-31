@@ -1,10 +1,10 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '@/lib/store'
 import { money } from '@/lib/format'
 import { today } from '@/lib/dates'
-import { exportState, importState, transactionsToCsv } from '@/lib/storage'
+import { exportState, importState, readSyncMeta, transactionsToCsv } from '@/lib/storage'
 import { emptyState } from '@/lib/seed'
 import type { Category, Settings } from '@/lib/types'
 import { Button, Card, Field, PageHeader, Row, Sheet } from '@/components/ui'
@@ -121,6 +121,8 @@ export default function SettingsPage() {
           ))}
         </div>
       </Card>
+
+      <DriveSync />
 
       <Card title="Your data">
         <p className="mb-4 text-[13.5px] leading-relaxed text-muted">
@@ -315,5 +317,144 @@ export default function SettingsPage() {
           })()}
       </Sheet>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ *
+ * Google Drive sync
+ * ------------------------------------------------------------------ */
+
+function DriveSync() {
+  const { sync, connectDrive, disconnectDrive, syncDrive } = useStore()
+  const [clientId, setClientId] = useState('')
+  const [showSetup, setShowSetup] = useState(false)
+
+  useEffect(() => {
+    setClientId(readSyncMeta().clientId)
+  }, [])
+
+  const relative = sync.lastSyncedAt
+    ? (() => {
+        const mins = Math.round((Date.now() - new Date(sync.lastSyncedAt).getTime()) / 60000)
+        if (mins < 1) return 'just now'
+        if (mins < 60) return `${mins} min ago`
+        const hrs = Math.round(mins / 60)
+        if (hrs < 24) return `${hrs} hr ago`
+        return `${Math.round(hrs / 24)} days ago`
+      })()
+    : null
+
+  return (
+    <Card title="Sync across devices">
+      {sync.connected ? (
+        <>
+          <div className="mb-4 flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-good/15 text-[17px] text-good">
+              ✓
+            </span>
+            <div className="min-w-0">
+              <p className="text-[15px]">Connected to Google Drive</p>
+              <p className="mt-0.5 text-[12.5px] text-faint">
+                {relative ? `Last synced ${relative}` : 'Not synced yet'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="accent" onClick={() => void syncDrive()} disabled={sync.busy}>
+              {sync.busy ? 'Syncing…' : 'Sync now'}
+            </Button>
+            <Button onClick={() => void disconnectDrive()} disabled={sync.busy}>
+              Disconnect
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="mb-4 text-[13.5px] leading-relaxed text-muted">
+            Keeps your phone and laptop in step. The file lives in a hidden folder inside{' '}
+            <span className="text-text">your own Google Drive</span> — this app can only ever see that
+            one folder, never the rest of your files.
+          </p>
+
+          <Field label="Google client ID" hint="A one-off setup. Tap below for the steps.">
+            <input
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              placeholder="…apps.googleusercontent.com"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </Field>
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button
+              variant="accent"
+              onClick={() => void connectDrive(clientId)}
+              disabled={sync.busy || !clientId.trim()}
+            >
+              {sync.busy ? 'Connecting…' : 'Connect'}
+            </Button>
+            <Button onClick={() => setShowSetup(true)}>How do I get one?</Button>
+          </div>
+        </>
+      )}
+
+      {sync.message && <p className="mt-3 text-[13px] text-good">{sync.message}</p>}
+      {sync.error && <p className="mt-3 text-[13px] text-bad">{sync.error}</p>}
+
+      <p className="mt-4 rounded-[var(--radius-control)] border border-line-soft bg-surface p-3 text-[12.5px] leading-relaxed text-ghost">
+        Syncing pulls first, merges, then writes back. Transactions from both devices are kept,
+        deletions are respected, and where the same setting was changed in two places the more recent
+        save wins.
+      </p>
+
+      <Sheet open={showSetup} onClose={() => setShowSetup(false)} title="Set up Drive sync">
+        <ol className="space-y-4 pb-2 text-[14px] leading-relaxed text-muted">
+          <li>
+            <span className="text-text">1. Make a project.</span> Open{' '}
+            <a
+              href="https://console.cloud.google.com/projectcreate"
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent underline underline-offset-2"
+            >
+              console.cloud.google.com
+            </a>{' '}
+            and create one. Any name will do.
+          </li>
+          <li>
+            <span className="text-text">2. Turn on the Drive API.</span> Search “Google Drive API” in
+            the console and press Enable.
+          </li>
+          <li>
+            <span className="text-text">3. Fill in the consent screen.</span> Choose External, put your
+            own email in, and add yourself as a test user. Leaving it in testing mode is fine — it just
+            means Google shows an “unverified app” warning that only you will ever see.
+          </li>
+          <li>
+            <span className="text-text">4. Create the credential.</span> Credentials → Create → OAuth
+            client ID → Web application. Under{' '}
+            <span className="text-text">Authorised JavaScript origins</span> add both of these:
+            <span className="mt-2 block overflow-x-auto rounded-[8px] border border-line-soft bg-ink p-2.5 text-[12px] text-muted">
+              https://arhamsaraogi-star.github.io
+              <br />
+              http://localhost:3000
+            </span>
+          </li>
+          <li>
+            <span className="text-text">5. Copy the client ID</span> — it ends in{' '}
+            <span className="text-text">.apps.googleusercontent.com</span> — and paste it here. On your
+            other device you only need to repeat this paste.
+          </li>
+        </ol>
+        <p className="mt-4 text-[12.5px] leading-relaxed text-ghost">
+          The client ID is not a secret; it identifies the app, not you. The only permission requested
+          is <span className="text-muted">drive.appdata</span>, which cannot read anything else in your
+          Drive.
+        </p>
+      </Sheet>
+    </Card>
   )
 }

@@ -212,5 +212,11 @@ export const financialState = z.object({
   recurring: z.array(recurring),
   goals: z.array(goal),
   rules: z.array(rule),
+  /**
+   * Tombstones. Without these, merging two devices resurrects anything deleted
+   * on one of them — the other device still has the row, and a union has no way
+   * to tell "deleted here" from "not yet seen here". Capped when written.
+   */
+  deletedTransactionIds: z.array(z.string()).default([]),
 })
 export type FinancialState = z.infer<typeof financialState>

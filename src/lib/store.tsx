@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import type { FinancialState, Transaction } from '@/lib/types'
@@ -15,8 +16,17 @@ import { localStore } from '@/lib/storage'
 import { simulate, type Forecast } from '@/lib/engine/forecast'
 import { analytics, healthScore, type Analytics } from '@/lib/engine/analytics'
 import { advisories, type Advisory } from '@/lib/engine/advisor'
+import { canSyncQuietly, connect, disconnect, readSyncMeta, syncNow } from '@/lib/sync'
 
 export type NewTransaction = Omit<Transaction, 'id'>
+
+export interface SyncStatus {
+  connected: boolean
+  busy: boolean
+  lastSyncedAt: string | null
+  message: string | null
+  error: string | null
+}
 
 interface StoreValue {
   state: FinancialState
@@ -39,6 +49,11 @@ interface StoreValue {
 
   accountName: (id: string | null | undefined) => string
   categoryOf: (id: string) => FinancialState['categories'][number] | undefined
+
+  sync: SyncStatus
+  connectDrive: (clientId: string) => Promise<void>
+  disconnectDrive: () => Promise<void>
+  syncDrive: () => Promise<void>
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
@@ -137,9 +152,79 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const existing = prev.transactions.find((t) => t.id === id)
       if (!existing) return prev
       const reverted = applyToBalances(prev, existing, -1)
-      return { ...reverted, transactions: reverted.transactions.filter((t) => t.id !== id) }
+      return {
+        ...reverted,
+        transactions: reverted.transactions.filter((t) => t.id !== id),
+        // Record the deletion so a sync from another device cannot resurrect it.
+        deletedTransactionIds: [...(reverted.deletedTransactionIds ?? []), id].slice(-500),
+      }
     })
   }, [])
+
+  /* ---- Google Drive sync ------------------------------------------------ */
+
+  const [sync, setSync] = useState<SyncStatus>({
+    connected: false,
+    busy: false,
+    lastSyncedAt: null,
+    message: null,
+    error: null,
+  })
+
+  useEffect(() => {
+    const meta = readSyncMeta()
+    setSync((s) => ({ ...s, connected: meta.connected, lastSyncedAt: meta.lastSyncedAt }))
+  }, [])
+
+  // `stateRef` lets the debounced push read the latest state without making the
+  // push callback change identity on every keystroke.
+  const stateRef = useRef(state)
+  stateRef.current = state
+
+  const runSync = useCallback(
+    async (interactive: boolean, clientId?: string) => {
+      setSync((s) => ({ ...s, busy: true, error: null, message: null }))
+      try {
+        const result = clientId
+          ? await connect(clientId, stateRef.current)
+          : await syncNow(stateRef.current, { interactive })
+        setState(result.state)
+        setSync({
+          connected: true,
+          busy: false,
+          lastSyncedAt: result.syncedAt,
+          message: result.message,
+          error: null,
+        })
+      } catch (err) {
+        setSync((s) => ({
+          ...s,
+          busy: false,
+          error: err instanceof Error ? err.message : 'Sync failed.',
+        }))
+      }
+    },
+    [],
+  )
+
+  const connectDrive = useCallback(async (clientId: string) => runSync(true, clientId), [runSync])
+  const syncDrive = useCallback(async () => runSync(true), [runSync])
+
+  const disconnectDrive = useCallback(async () => {
+    await disconnect()
+    setSync({ connected: false, busy: false, lastSyncedAt: null, message: null, error: null })
+  }, [])
+
+  // Push changes up a few seconds after the user stops editing. Only attempted
+  // when a token is already live — a background sync must never pop a Google
+  // window at someone in the middle of typing.
+  useEffect(() => {
+    if (!ready || !sync.connected) return
+    const t = setTimeout(() => {
+      if (canSyncQuietly()) void runSync(false)
+    }, 4000)
+    return () => clearTimeout(t)
+  }, [state, ready, sync.connected, runSync])
 
   // The derived views every screen reads. Recomputed only when the underlying
   // state or horizon changes — the 365-day simulation is real work.
@@ -176,6 +261,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       advice,
       accountName,
       categoryOf,
+      sync,
+      connectDrive,
+      disconnectDrive,
+      syncDrive,
     }),
     [
       state,
@@ -193,6 +282,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       advice,
       accountName,
       categoryOf,
+      sync,
+      connectDrive,
+      disconnectDrive,
+      syncDrive,
     ],
   )
 

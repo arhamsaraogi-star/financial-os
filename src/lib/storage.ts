@@ -16,8 +16,53 @@ export interface StateStore {
 }
 
 const KEY = 'fos.state.v2'
+const STAMP_KEY = 'fos.updatedAt'
+const SYNC_KEY = 'fos.sync.v1'
 /** Keys from earlier schema versions, cleaned up on first successful load. */
 const LEGACY_KEYS = ['fos.state.v1']
+
+/**
+ * When this browser last changed anything. Kept beside the state rather than
+ * inside it, so stamping a save cannot feed back into React state and trigger
+ * another save.
+ */
+export function localUpdatedAt(): string {
+  if (typeof window === 'undefined') return ''
+  return window.localStorage.getItem(STAMP_KEY) ?? ''
+}
+
+export interface SyncMeta {
+  clientId: string
+  connected: boolean
+  fileId: string | null
+  lastSyncedAt: string | null
+  lastError: string | null
+}
+
+const EMPTY_META: SyncMeta = {
+  clientId: '',
+  connected: false,
+  fileId: null,
+  lastSyncedAt: null,
+  lastError: null,
+}
+
+export function readSyncMeta(): SyncMeta {
+  if (typeof window === 'undefined') return EMPTY_META
+  try {
+    const raw = window.localStorage.getItem(SYNC_KEY)
+    return raw ? { ...EMPTY_META, ...JSON.parse(raw) } : EMPTY_META
+  } catch {
+    return EMPTY_META
+  }
+}
+
+export function writeSyncMeta(meta: Partial<SyncMeta>) {
+  if (typeof window === 'undefined') return
+  const next = { ...readSyncMeta(), ...meta }
+  window.localStorage.setItem(SYNC_KEY, JSON.stringify(next))
+  return next
+}
 
 export const localStore: StateStore = {
   async load() {
@@ -38,6 +83,7 @@ export const localStore: StateStore = {
     if (typeof window === 'undefined') return
     try {
       window.localStorage.setItem(KEY, JSON.stringify(state))
+      window.localStorage.setItem(STAMP_KEY, new Date().toISOString())
     } catch {
       // Quota or private-mode failure: the session works, it just won't persist.
     }
